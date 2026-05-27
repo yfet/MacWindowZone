@@ -1,0 +1,138 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag to release (e.g. v0.2.0). Must already exist on a commit on main.'
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-release:
+    runs-on: macos-14  # Apple Silicon runner; we cross-compile both archs from here.
+    timeout-minutes: 25
+
+    steps:
+      - name: Determine and validate tag
+        id: tag
+        env:
+          # Funnel untrusted inputs through env vars so they can't break out
+          # of shell quoting in `run:` blocks.
+          INPUT_TAG: ${{ github.event.inputs.tag }}
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            TAG="$INPUT_TAG"
+          else
+            TAG="${GITHUB_REF##refs/tags/}"
+          fi
+          # Strict allow-list: vX.Y.Z optionally followed by -prerelease.
+          if [[ ! "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[A-Za-z0-9.-]+)?$ ]]; then
+            echo "::error::Refusing to release malformed tag: $TAG"
+            exit 1
+          fi
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "Releasing tag: $TAG"
+
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          # Safe to interpolate — `steps.tag.outputs.tag` has been regex-validated above.
+          ref: ${{ steps.tag.outputs.tag }}
+
+      - name: Show toolchain
+        run: |
+          sw_vers
+          xcodebuild -version
+          swift --version
+          which gh
+
+      - name: Generate AppIcon.icns
+        run: swift scripts/generate-icon.swift
+
+      - name: Build arm64 (Apple Silicon)
+        run: ./scripts/build-app.sh arm64
+
+      - name: Build x86_64 (Intel)
+        run: ./scripts/build-app.sh x86_64
+
+      - name: Verify architectures
+        run: |
+          lipo -info build/MacWindowZone-arm64.app/Contents/MacOS/MacWindowZone | grep -q arm64
+          lipo -info build/MacWindowZone-x86_64.app/Contents/MacOS/MacWindowZone | grep -q x86_64
+
+      - name: Package zips
+        id: pkg
+        env:
+          TAG: ${{ steps.tag.outputs.tag }}
+        run: |
+          for ARCH in arm64 x86_64; do
+            STAGE=".build/release-${ARCH}/MacWindowZone.app"
+            rm -rf "$(dirname "$STAGE")"
+            mkdir -p "$(dirname "$STAGE")"
+            cp -R "build/MacWindowZone-${ARCH}.app" "$STAGE"
+            ditto -c -k --sequesterRsrc --keepParent "$STAGE" "build/MacWindowZone-${TAG}-${ARCH}.zip"
+          done
+          ls -la build/*.zip
+          {
+            echo "arm_sha=$(shasum -a 256 build/MacWindowZone-${TAG}-arm64.zip | awk '{print $1}')"
+            echo "intel_sha=$(shasum -a 256 build/MacWindowZone-${TAG}-x86_64.zip | awk '{print $1}')"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Write release notes
+        env:
+          TAG: ${{ steps.tag.outputs.tag }}
+          ARM_SHA: ${{ steps.pkg.outputs.arm_sha }}
+          INTEL_SHA: ${{ steps.pkg.outputs.intel_sha }}
+          REPO: ${{ github.repository }}
+        run: |
+          mkdir -p .build
+          cat > .build/release-notes.md <<EOF
+          MacWindowZone $TAG.
+
+          Two architecture-specific builds — pick the one matching your Mac.
+          Run \`uname -m\` to check: \`arm64\` → Apple Silicon, \`x86_64\` → Intel.
+
+          | File | Architecture | macOS |
+          |---|---|---|
+          | \`MacWindowZone-${TAG}-arm64.zip\` | Apple Silicon (M1/M2/M3/...) | 14+ |
+          | \`MacWindowZone-${TAG}-x86_64.zip\` | Intel | 14+ |
+
+          ## Install
+          1. Download the appropriate \`.zip\`, unzip.
+          2. Drag \`MacWindowZone.app\` into \`/Applications\`.
+          3. Grant Accessibility access in *System Settings → Privacy & Security → Accessibility*.
+
+          ## SHA-256
+          \`\`\`
+          $ARM_SHA   MacWindowZone-${TAG}-arm64.zip
+          $INTEL_SHA   MacWindowZone-${TAG}-x86_64.zip
+          \`\`\`
+
+          [Full feature list and docs ›](https://github.com/${REPO}/blob/main/README.md)
+          EOF
+
+      - name: Create or update release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.tag.outputs.tag }}
+        run: |
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "Release exists — uploading assets with --clobber"
+            gh release upload "$TAG" \
+              "build/MacWindowZone-${TAG}-arm64.zip" \
+              "build/MacWindowZone-${TAG}-x86_64.zip" \
+              --clobber
+            gh release edit "$TAG" --notes-file .build/release-notes.md
+          else
+            gh release create "$TAG" \
+              --title "MacWindowZone $TAG" \
+              --notes-file .build/release-notes.md \
+              "build/MacWindowZone-${TAG}-arm64.zip" \
+              "build/MacWindowZone-${TAG}-x86_64.zip"
+          fi

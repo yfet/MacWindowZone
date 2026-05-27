@@ -1,0 +1,544 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>MacWindowZone — Native macOS FancyZones</title>
+    <meta name="description" content="Define zones, snap windows into them, and have windows return to their zones on launch. Pure Swift / AppKit. Open source." />
+    <meta name="theme-color" content="#0d1a3a" />
+    <link rel="icon" type="image/png" href="assets/favicon-64.png" />
+    <link rel="apple-touch-icon" href="assets/icon-256.png" />
+
+    <!-- Open Graph -->
+    <meta property="og:type" content="website" />
+    <meta property="og:title" content="MacWindowZone — Native macOS FancyZones" />
+    <meta property="og:description" content="Define zones, snap windows, remember placements. Pure Swift / AppKit. Open source." />
+    <meta property="og:url" content="https://yfet.github.io/MacWindowZone/" />
+    <meta property="og:image" content="https://yfet.github.io/MacWindowZone/assets/og-banner.png" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+
+    <!-- Twitter Card -->
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="MacWindowZone — Native macOS FancyZones" />
+    <meta name="twitter:description" content="Define zones, snap windows, remember placements. Pure Swift / AppKit. Open source." />
+    <meta name="twitter:image" content="https://yfet.github.io/MacWindowZone/assets/og-banner.png" />
+
+    <style>
+        :root {
+            --bg-0: #050912;
+            --bg-1: #0a1326;
+            --bg-2: #0f1c3e;
+            --card: rgba(255, 255, 255, 0.04);
+            --card-border: rgba(255, 255, 255, 0.08);
+            --card-hover: rgba(255, 255, 255, 0.07);
+            --accent: #5b9dff;
+            --accent-bright: #80b8ff;
+            --accent-soft: rgba(91, 157, 255, 0.15);
+            --text: #e6ecf5;
+            --text-dim: #97a3b6;
+            --text-dimmer: #5a6678;
+            --code-bg: rgba(0, 0, 0, 0.45);
+            --shadow-glow: 0 10px 60px -10px rgba(91, 157, 255, 0.35);
+        }
+
+        * { box-sizing: border-box; }
+
+        html, body {
+            margin: 0;
+            padding: 0;
+            font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Helvetica Neue", Helvetica, Arial, sans-serif;
+            color: var(--text);
+            line-height: 1.5;
+            -webkit-font-smoothing: antialiased;
+            -moz-osx-font-smoothing: grayscale;
+        }
+
+        body {
+            background:
+                radial-gradient(ellipse 80% 50% at 50% -10%, rgba(91, 157, 255, 0.20), transparent 70%),
+                linear-gradient(180deg, var(--bg-1) 0%, var(--bg-0) 100%);
+            min-height: 100vh;
+        }
+
+        a { color: var(--accent-bright); text-decoration: none; }
+        a:hover { color: #b3d4ff; text-decoration: underline; }
+
+        code, kbd {
+            font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+            font-size: 0.92em;
+        }
+        code {
+            background: var(--code-bg);
+            padding: 2px 7px;
+            border-radius: 5px;
+            color: #d3e3ff;
+        }
+        kbd {
+            background: rgba(255, 255, 255, 0.08);
+            border: 1px solid rgba(255, 255, 255, 0.16);
+            border-bottom-width: 2px;
+            padding: 2px 8px;
+            border-radius: 5px;
+            font-size: 0.85em;
+            color: var(--text);
+            white-space: nowrap;
+        }
+
+        /* ─── Container ────────────────────────────────────────────── */
+        .wrap {
+            max-width: 1080px;
+            margin: 0 auto;
+            padding: 0 24px;
+        }
+
+        /* ─── Hero ─────────────────────────────────────────────────── */
+        .hero {
+            padding: 80px 0 60px;
+            text-align: center;
+        }
+        .hero img.icon {
+            width: 168px;
+            height: 168px;
+            filter: drop-shadow(0 16px 36px rgba(91, 157, 255, 0.45));
+            margin-bottom: 32px;
+        }
+        .hero h1 {
+            font-size: clamp(2.2rem, 5.5vw, 3.6rem);
+            font-weight: 800;
+            margin: 0 0 14px;
+            letter-spacing: -0.02em;
+            background: linear-gradient(180deg, #ffffff 0%, #b8d0ff 100%);
+            -webkit-background-clip: text;
+            background-clip: text;
+            color: transparent;
+        }
+        .hero .tagline {
+            font-size: clamp(1.05rem, 2vw, 1.3rem);
+            color: var(--text-dim);
+            max-width: 640px;
+            margin: 0 auto 36px;
+        }
+        .badges {
+            display: flex;
+            justify-content: center;
+            gap: 10px;
+            flex-wrap: wrap;
+            margin-bottom: 28px;
+        }
+        .badge {
+            background: var(--card);
+            border: 1px solid var(--card-border);
+            color: var(--text-dim);
+            padding: 5px 14px;
+            border-radius: 999px;
+            font-size: 0.84rem;
+            font-weight: 500;
+        }
+
+        .cta-row {
+            display: flex;
+            justify-content: center;
+            gap: 16px;
+            flex-wrap: wrap;
+            margin-top: 12px;
+        }
+        .btn {
+            display: inline-flex;
+            align-items: center;
+            gap: 10px;
+            padding: 12px 22px;
+            border-radius: 12px;
+            font-weight: 600;
+            font-size: 0.98rem;
+            text-decoration: none;
+            border: 1px solid transparent;
+            transition: transform 0.12s ease, background 0.12s ease, box-shadow 0.12s ease;
+            white-space: nowrap;
+        }
+        .btn:hover { transform: translateY(-1px); text-decoration: none; }
+        .btn-primary {
+            background: linear-gradient(180deg, #4d8aff 0%, #2c66e0 100%);
+            color: #fff;
+            box-shadow: var(--shadow-glow);
+        }
+        .btn-primary:hover { background: linear-gradient(180deg, #5c98ff 0%, #366fe6 100%); color: #fff; }
+        .btn-primary .sub {
+            font-size: 0.72rem;
+            font-weight: 400;
+            opacity: 0.78;
+            display: block;
+            line-height: 1;
+            margin-top: 4px;
+        }
+        .btn-secondary {
+            background: var(--card);
+            color: var(--text);
+            border-color: var(--card-border);
+        }
+        .btn-secondary:hover { background: var(--card-hover); color: var(--text); }
+
+        /* ─── Sections ─────────────────────────────────────────────── */
+        section {
+            padding: 56px 0;
+        }
+        h2 {
+            font-size: clamp(1.55rem, 3.4vw, 2.1rem);
+            font-weight: 700;
+            margin: 0 0 14px;
+            letter-spacing: -0.01em;
+        }
+        h2 + p.section-lead {
+            color: var(--text-dim);
+            margin: 0 0 36px;
+            max-width: 640px;
+            font-size: 1.02rem;
+        }
+
+        /* ─── Feature grid ─────────────────────────────────────────── */
+        .features {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+            gap: 14px;
+        }
+        .feature {
+            background: var(--card);
+            border: 1px solid var(--card-border);
+            border-radius: 14px;
+            padding: 22px;
+            transition: background 0.15s ease, border-color 0.15s ease, transform 0.15s ease;
+        }
+        .feature:hover {
+            background: var(--card-hover);
+            border-color: rgba(255, 255, 255, 0.14);
+            transform: translateY(-2px);
+        }
+        .feature .icon-circle {
+            width: 36px;
+            height: 36px;
+            border-radius: 10px;
+            background: var(--accent-soft);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin-bottom: 14px;
+            font-size: 1.1rem;
+        }
+        .feature h3 {
+            margin: 0 0 8px;
+            font-size: 1.02rem;
+            font-weight: 650;
+        }
+        .feature p {
+            margin: 0;
+            color: var(--text-dim);
+            font-size: 0.93rem;
+            line-height: 1.55;
+        }
+
+        /* ─── Usage cheatsheet ─────────────────────────────────────── */
+        .cheatsheet {
+            background: var(--card);
+            border: 1px solid var(--card-border);
+            border-radius: 14px;
+            padding: 8px 4px;
+            overflow: hidden;
+        }
+        .cheatsheet table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+        .cheatsheet td {
+            padding: 12px 20px;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+            vertical-align: middle;
+        }
+        .cheatsheet tr:last-child td { border-bottom: none; }
+        .cheatsheet td:first-child {
+            width: 38%;
+            color: var(--text);
+        }
+        .cheatsheet td:last-child {
+            color: var(--text-dim);
+        }
+        .cheatsheet kbd {
+            margin-right: 4px;
+        }
+
+        /* ─── Steps ───────────────────────────────────────────────── */
+        .steps {
+            display: grid;
+            gap: 14px;
+            counter-reset: step;
+            list-style: none;
+            padding: 0;
+            margin: 0;
+        }
+        .steps li {
+            background: var(--card);
+            border: 1px solid var(--card-border);
+            border-radius: 12px;
+            padding: 18px 22px 18px 64px;
+            position: relative;
+            color: var(--text);
+            font-size: 0.98rem;
+        }
+        .steps li::before {
+            counter-increment: step;
+            content: counter(step);
+            position: absolute;
+            left: 20px;
+            top: 50%;
+            transform: translateY(-50%);
+            width: 32px;
+            height: 32px;
+            border-radius: 50%;
+            background: var(--accent-soft);
+            color: var(--accent-bright);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: 700;
+            font-size: 0.95rem;
+        }
+
+        /* ─── Footer ──────────────────────────────────────────────── */
+        footer {
+            text-align: center;
+            padding: 56px 0 36px;
+            color: var(--text-dimmer);
+            font-size: 0.88rem;
+            border-top: 1px solid rgba(255, 255, 255, 0.05);
+            margin-top: 56px;
+        }
+        footer a { color: var(--text-dim); }
+        footer a:hover { color: var(--text); }
+
+        /* ─── Small screens ───────────────────────────────────────── */
+        @media (max-width: 640px) {
+            .hero { padding-top: 56px; }
+            .hero img.icon { width: 128px; height: 128px; }
+            section { padding: 42px 0; }
+            .cheatsheet td { padding: 10px 14px; font-size: 0.92rem; }
+            .cheatsheet td:first-child { width: 44%; }
+        }
+    </style>
+</head>
+<body>
+
+<div class="wrap">
+
+    <!-- ────────── Hero ────────── -->
+    <header class="hero">
+        <img class="icon" src="assets/icon-1024.png" alt="MacWindowZone icon" />
+        <h1>MacWindowZone</h1>
+        <p class="tagline">
+            Native macOS clone of Windows <strong>FancyZones</strong>. Define zones on every display,
+            snap any window into them, and have windows return to their zones the next time they open.
+        </p>
+
+        <div class="badges">
+            <span class="badge">Free &amp; open source</span>
+            <span class="badge">macOS 14+</span>
+            <span class="badge">Apple Silicon &amp; Intel</span>
+            <span class="badge">Pure Swift / AppKit</span>
+            <span class="badge">No telemetry</span>
+        </div>
+
+        <div class="cta-row">
+            <a class="btn btn-primary" id="dl-arm64"
+               href="https://github.com/yfet/MacWindowZone/releases/latest/download/MacWindowZone-v0.1.0-arm64.zip">
+                Download for Mac
+                <span class="sub" id="arch-sub">Apple Silicon · macOS 14+</span>
+            </a>
+            <a class="btn btn-secondary" id="dl-x86"
+               href="https://github.com/yfet/MacWindowZone/releases/latest/download/MacWindowZone-v0.1.0-x86_64.zip">
+                Intel build
+            </a>
+            <a class="btn btn-secondary"
+               href="https://github.com/yfet/MacWindowZone">
+                GitHub
+            </a>
+        </div>
+    </header>
+
+    <!-- ────────── Features ────────── -->
+    <section>
+        <h2>What it does</h2>
+        <p class="section-lead">
+            Everything you'd expect from a FancyZones-style window manager, plus a few macOS-specific touches.
+        </p>
+
+        <div class="features">
+            <div class="feature">
+                <div class="icon-circle">▦</div>
+                <h3>Per-display zone editor</h3>
+                <p>Translucent overlay over every screen. Draw, move, resize, split and delete zones with the mouse.</p>
+            </div>
+
+            <div class="feature">
+                <div class="icon-circle">◧</div>
+                <h3>Layout templates</h3>
+                <p>Focus, Halves, 3 Columns, 2/3 Rows, 2×2 Grid, 3×3 Grid, Priority Grid. Pick a different layout per screen.</p>
+            </div>
+
+            <div class="feature">
+                <div class="icon-circle">↔</div>
+                <h3>Shared-edge resize</h3>
+                <p>Drag a divider between two zones and both resize together. Smart delete fills the gap with adjacent neighbours.</p>
+            </div>
+
+            <div class="feature">
+                <div class="icon-circle">⌃</div>
+                <h3>Snap by hotkey</h3>
+                <p><kbd>⌃⌥1</kbd> through <kbd>⌃⌥9</kbd> snap the focused window to zone 1…9 on its current screen.</p>
+            </div>
+
+            <div class="feature">
+                <div class="icon-circle">⇧</div>
+                <h3>Snap by drag</h3>
+                <p>Hold the configured modifier (default <kbd>⇧ Shift</kbd>) while dragging a window. Drop into a zone — done.</p>
+            </div>
+
+            <div class="feature">
+                <div class="icon-circle">⟳</div>
+                <h3>Window memory</h3>
+                <p>Recurring apps + window titles return to their assigned zone automatically the next time they open.</p>
+            </div>
+
+            <div class="feature">
+                <div class="icon-circle">✕</div>
+                <h3>Configurable gap</h3>
+                <p>Add visual breathing room between snapped windows. Default 4 pt, presets 0–24 pt, or a custom value.</p>
+            </div>
+
+            <div class="feature">
+                <div class="icon-circle">⌘</div>
+                <h3>Browser-safe</h3>
+                <p>Chrome, Edge, Brave, Safari, Firefox, Arc, Opera, Vivaldi are excluded from auto-restore by default — their own session restoration stays intact.</p>
+            </div>
+
+            <div class="feature">
+                <div class="icon-circle">↻</div>
+                <h3>Launch at login</h3>
+                <p>Modern <code>SMAppService</code>-based toggle. Live status indicator in the status-bar menu.</p>
+            </div>
+
+            <div class="feature">
+                <div class="icon-circle">≡</div>
+                <h3>Status-bar only</h3>
+                <p>No Dock icon, no persistent main window. Lives quietly in the menu bar until you need it.</p>
+            </div>
+        </div>
+    </section>
+
+    <!-- ────────── Install ────────── -->
+    <section id="install">
+        <h2>Install in 30 seconds</h2>
+        <ol class="steps">
+            <li>Download the <code>.zip</code> matching your Mac (run <code>uname -m</code> to check — <code>arm64</code> for Apple Silicon, <code>x86_64</code> for Intel).</li>
+            <li>Unzip and drag <code>MacWindowZone.app</code> into <code>/Applications</code>.</li>
+            <li>Launch it. macOS will ask for <strong>Accessibility</strong> access — required to move and resize other apps' windows.</li>
+            <li>Open <em>System Settings → Privacy &amp; Security → Accessibility</em>, find <em>MacWindowZone</em> and toggle it on. No relaunch needed — the app detects the grant automatically.</li>
+        </ol>
+    </section>
+
+    <!-- ────────── Cheatsheet ────────── -->
+    <section id="cheatsheet">
+        <h2>Cheatsheet</h2>
+        <p class="section-lead">Every gesture in one screen.</p>
+
+        <div class="cheatsheet">
+            <table>
+                <tr><td><strong>Editing zones</strong></td><td>From the menu bar — click <em>Edit Zones…</em></td></tr>
+                <tr><td>Create a zone</td><td>Click + drag on empty area</td></tr>
+                <tr><td>Move a zone</td><td>Drag inside it</td></tr>
+                <tr><td>Resize a zone</td><td>Drag an edge or corner (adjacent zones move with it)</td></tr>
+                <tr><td>Split vertically</td><td><kbd>⇧ Shift</kbd> + click inside a zone</td></tr>
+                <tr><td>Split horizontally</td><td><kbd>⌃ Control</kbd> + click inside a zone</td></tr>
+                <tr><td>Delete</td><td>Select, then <kbd>Delete</kbd> (neighbours absorb the space)</td></tr>
+                <tr><td>Reset current screen</td><td><kbd>⌘ Cmd</kbd> + <kbd>R</kbd></td></tr>
+                <tr><td>Exit editor</td><td><kbd>Esc</kbd> or click the <em>Done</em> button</td></tr>
+                <tr><td colspan="2" style="padding-top: 18px;"><strong>Snapping windows</strong></td></tr>
+                <tr><td>Snap focused window</td><td><kbd>⌃ Ctrl</kbd> + <kbd>⌥ Opt</kbd> + <kbd>1</kbd> through <kbd>9</kbd></td></tr>
+                <tr><td>Snap by drag</td><td>Hold <kbd>⇧ Shift</kbd>, drag a window, drop into a zone</td></tr>
+                <tr><td>From menu</td><td><em>Snap Focused Window ▸ [screen] ▸ [zone]</em></td></tr>
+            </table>
+        </div>
+    </section>
+
+    <!-- ────────── FAQ ────────── -->
+    <section>
+        <h2>Questions</h2>
+
+        <div class="features">
+            <div class="feature">
+                <h3>Why does it need Accessibility access?</h3>
+                <p>To move and resize other apps' windows we use macOS' Accessibility API. That's the only way to drive windows of apps we didn't write ourselves. No keystroke or screen capture happens.</p>
+            </div>
+
+            <div class="feature">
+                <h3>Does it send any data anywhere?</h3>
+                <p>No. Zero network requests. Everything (zone definitions, window memory) lives in <code>~/Library/Application Support/MacWindowZone/</code>.</p>
+            </div>
+
+            <div class="feature">
+                <h3>Why are browsers skipped from auto-restore?</h3>
+                <p>Attaching AX observers and calling <code>setFrame</code> on a browser during its startup can disrupt its own tab/session restoration. Manual snap (hotkey, Shift+drag, menu) still works for browsers — only the silent auto-restore is opted out.</p>
+            </div>
+
+            <div class="feature">
+                <h3>The download triggers an "unidentified developer" warning. Is it safe?</h3>
+                <p>The builds are ad-hoc signed (no paid Apple Developer ID). Right-click the app → <em>Open</em> the first time to bypass Gatekeeper, or build from source — the project is small enough to read end-to-end.</p>
+            </div>
+
+            <div class="feature">
+                <h3>I want to contribute / report a bug.</h3>
+                <p>Open an <a href="https://github.com/yfet/MacWindowZone/issues">issue</a> or a pull request. The <code>main</code> branch is protected — PRs only.</p>
+            </div>
+
+            <div class="feature">
+                <h3>What's the license?</h3>
+                <p>MIT. Do whatever you want with it.</p>
+            </div>
+        </div>
+    </section>
+
+    <footer>
+        <p>
+            <a href="https://github.com/yfet/MacWindowZone">GitHub</a> ·
+            <a href="https://github.com/yfet/MacWindowZone/releases">Releases</a> ·
+            <a href="https://github.com/yfet/MacWindowZone/issues">Issues</a> ·
+            <a href="https://github.com/yfet/MacWindowZone/blob/main/LICENSE">MIT License</a>
+        </p>
+        <p>Built with Swift &amp; AppKit. ☕</p>
+    </footer>
+
+</div>
+
+<script>
+    // Best-effort architecture hint for the primary download button.
+    (function () {
+        const ua = navigator.userAgentData;
+        const isMac = (navigator.platform || '').startsWith('Mac') || /Mac/i.test(navigator.userAgent || '');
+        if (!isMac) {
+            // Show both options equally — visitor is on Windows/Linux, no preference.
+            return;
+        }
+        const arch = ua && ua.architecture ? ua.architecture : null;
+        const sub = document.getElementById('arch-sub');
+        const arm = document.getElementById('dl-arm64');
+        const x86 = document.getElementById('dl-x86');
+        if (arch === 'x86') {
+            // Promote Intel as the primary download.
+            const tmp = arm.href; arm.href = x86.href; x86.href = tmp;
+            arm.firstChild.nodeValue = 'Download for Mac ';
+            sub.textContent = 'Intel · macOS 14+';
+            x86.textContent = 'Apple Silicon build';
+        }
+        // arm64 (or unknown) → keep the default ordering with Apple Silicon promoted.
+    })();
+</script>
+
+</body>
+</html>
