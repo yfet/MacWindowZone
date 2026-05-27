@@ -1,0 +1,22 @@
+# Swift / SPM build artefacts
+.build/
+.swiftpm/
+Package.resolved
+
+# App bundle output
+build/
+
+# Xcode / derived data
+*.xcodeproj
+DerivedData/
+
+# Generated icon source (the .icns itself is checked in)
+AppResources/AppIcon.iconset/
+
+# macOS / editor metadata
+.DS_Store
+.vscode/
+
+# Claude Code session memory (per-user, not project code)
+.remember/
+.claude/
