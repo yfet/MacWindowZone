@@ -4,6 +4,16 @@ A native macOS clone of Windows **FancyZones** — define rectangular zones on e
 
 > Pure Swift / AppKit, no third-party dependencies. Lives in the menu bar.
 
+## Links
+
+| | |
+|---|---|
+| 🌐 **Website / docs** | https://yfet.github.io/MacWindowZone/ |
+| 📦 **Downloads (latest release)** | https://github.com/yfet/MacWindowZone/releases/latest |
+| 🗃 **All releases** | https://github.com/yfet/MacWindowZone/releases |
+| 🐛 **Issues / bug reports** | https://github.com/yfet/MacWindowZone/issues |
+| 📜 **License** | [MIT](LICENSE) |
+
 ---
 
 ## Features
