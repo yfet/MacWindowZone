@@ -50,17 +50,14 @@ func savePNG(_ rep: NSBitmapImageRep, to file: String) throws {
 
 // MARK: - App icon (square, Big Sur-style squircle)
 
-func drawAppIcon(pixels: Int) -> NSBitmapImageRep {
-    let (rep, ctx) = makeRep(pixels: pixels)
-    NSGraphicsContext.saveGraphicsState()
-    defer { NSGraphicsContext.restoreGraphicsState() }
-    NSGraphicsContext.current = ctx
-    ctx.shouldAntialias = true
-    ctx.imageInterpolation = .high
-
-    let s = CGFloat(pixels)
+/// Draws the squircle icon at `origin` with side `s` into the CURRENT
+/// NSGraphicsContext. Caller is responsible for setting the context up.
+/// Used both to make the standalone icon-NNN.png AND to composite the icon
+/// directly onto the banner (no intermediate bitmap = no alpha issues).
+func drawIconContent(origin: NSPoint, side s: CGFloat) {
     let pad = s * 0.085
-    let bgRect = NSRect(x: pad, y: pad, width: s - 2*pad, height: s - 2*pad)
+    let bgRect = NSRect(x: origin.x + pad, y: origin.y + pad,
+                        width: s - 2*pad, height: s - 2*pad)
     let corner = bgRect.width * 0.2237
     let bg = NSBezierPath(roundedRect: bgRect, xRadius: corner, yRadius: corner)
 
@@ -77,7 +74,8 @@ func drawAppIcon(pixels: Int) -> NSBitmapImageRep {
     glow.stroke()
 
     let innerInset = s * 0.22
-    let inner = NSRect(x: innerInset, y: innerInset, width: s - 2*innerInset, height: s - 2*innerInset)
+    let inner = NSRect(x: origin.x + innerInset, y: origin.y + innerInset,
+                       width: s - 2*innerInset, height: s - 2*innerInset)
     let gap = max(s * 0.025, 1.5)
     let zc = s * 0.045
     let leftW = (inner.width - gap) * 0.6
@@ -98,7 +96,19 @@ func drawAppIcon(pixels: Int) -> NSBitmapImageRep {
     tile(mainR, alpha: 0.92)
     tile(topR,  alpha: 0.78)
     tile(botR,  alpha: 0.62)
+}
 
+/// Produces a standalone PNG of the icon (transparent outside the squircle).
+func drawAppIcon(pixels: Int) -> NSBitmapImageRep {
+    let (rep, ctx) = makeRep(pixels: pixels)
+    NSGraphicsContext.saveGraphicsState()
+    defer { NSGraphicsContext.restoreGraphicsState() }
+    NSGraphicsContext.current = ctx
+    ctx.shouldAntialias = true
+    ctx.imageInterpolation = .high
+    let s = CGFloat(pixels)
+    ctx.cgContext.clear(CGRect(x: 0, y: 0, width: s, height: s))
+    drawIconContent(origin: .zero, side: s)
     return rep
 }
 
@@ -137,47 +147,78 @@ func drawBanner() -> NSBitmapImageRep {
     path.stroke()
 
     // Left side: app icon, 380×380, centred vertically.
+    // Draw it directly into the banner's context — compositing as a separate
+    // NSBitmapImageRep replaces the destination's alpha channel and creates
+    // a transparent rectangle around the squircle, which renders as a white
+    // box on the social-card previews.
     let iconSize: CGFloat = 380
     let iconOriginX: CGFloat = 80
     let iconOriginY: CGFloat = (CGFloat(H) - iconSize) / 2
-    let iconRep = drawAppIcon(pixels: Int(iconSize))
-    iconRep.draw(in: NSRect(x: iconOriginX, y: iconOriginY, width: iconSize, height: iconSize))
+    drawIconContent(origin: NSPoint(x: iconOriginX, y: iconOriginY), side: iconSize)
 
-    // Right side: title + tagline.
+    // Right side: title + tagline. Keep everything inside a 60-px safe area
+    // from each edge — social-card UIs round the corners and crop the last
+    // few pixels along the bottom (and top).
+    let safeTop:    CGFloat = 80
+    let safeBot:    CGFloat = 80
     let textOriginX: CGFloat = iconOriginX + iconSize + 60
-    let textWidth: CGFloat = CGFloat(W) - textOriginX - 60
+    let textWidth:   CGFloat = CGFloat(W) - textOriginX - 60
+    let textBlockHeight: CGFloat = CGFloat(H) - safeTop - safeBot
+    let blockMinY:   CGFloat = safeBot
+    let blockMidY:   CGFloat = blockMinY + textBlockHeight / 2
 
     let title = NSAttributedString(string: "MacWindowZone", attributes: [
-        .font: NSFont.systemFont(ofSize: 78, weight: .heavy),
+        .font: NSFont.systemFont(ofSize: 72, weight: .heavy),
         .foregroundColor: NSColor.white,
         .kern: -1.5
     ])
-    let titleSize = title.boundingRect(with: NSSize(width: textWidth, height: 200), options: [.usesLineFragmentOrigin])
-    let titleY = CGFloat(H) / 2 + 40
-    title.draw(at: NSPoint(x: textOriginX, y: titleY))
+    let titleSize = title.boundingRect(
+        with: NSSize(width: textWidth, height: 200),
+        options: [.usesLineFragmentOrigin]
+    )
 
-    let tagline = NSAttributedString(string: "Native macOS FancyZones.\nDefine zones. Snap windows. Remember placements.", attributes: [
-        .font: NSFont.systemFont(ofSize: 28, weight: .medium),
-        .foregroundColor: NSColor(calibratedWhite: 1, alpha: 0.78),
-        .paragraphStyle: {
-            let p = NSMutableParagraphStyle()
-            p.lineSpacing = 6
-            return p
-        }()
-    ])
-    tagline.draw(in: NSRect(
-        x: textOriginX,
-        y: titleY - titleSize.height - 30,
-        width: textWidth,
-        height: 100
-    ))
+    let tagline = NSAttributedString(
+        string: "Native macOS FancyZones.\nDefine zones. Snap windows.",
+        attributes: [
+            .font: NSFont.systemFont(ofSize: 26, weight: .medium),
+            .foregroundColor: NSColor(calibratedWhite: 1, alpha: 0.80),
+            .paragraphStyle: {
+                let p = NSMutableParagraphStyle()
+                p.lineSpacing = 4
+                return p
+            }()
+        ]
+    )
+    let taglineSize = tagline.boundingRect(
+        with: NSSize(width: textWidth, height: 200),
+        options: [.usesLineFragmentOrigin]
+    )
 
-    // Bottom-left badge.
-    let badge = NSAttributedString(string: "github.com/yfet/MacWindowZone", attributes: [
-        .font: NSFont.monospacedSystemFont(ofSize: 18, weight: .medium),
-        .foregroundColor: NSColor(red: 0.50, green: 0.85, blue: 1.00, alpha: 0.85)
-    ])
-    badge.draw(at: NSPoint(x: textOriginX, y: 60))
+    let badge = NSAttributedString(
+        string: "github.com/yfet/MacWindowZone",
+        attributes: [
+            .font: NSFont.monospacedSystemFont(ofSize: 18, weight: .medium),
+            .foregroundColor: NSColor(red: 0.55, green: 0.85, blue: 1.00, alpha: 0.90)
+        ]
+    )
+    let badgeSize = badge.boundingRect(
+        with: NSSize(width: textWidth, height: 30),
+        options: [.usesLineFragmentOrigin]
+    )
+
+    // Stack the three elements vertically with fixed spacing, then centre
+    // the whole block inside the safe area.
+    let gapTitleTagline: CGFloat = 16
+    let gapTaglineBadge: CGFloat = 28
+    let totalH = titleSize.height + gapTitleTagline + taglineSize.height + gapTaglineBadge + badgeSize.height
+    var cursorY = blockMidY + totalH / 2 - titleSize.height  // top-of-title baseline (Cocoa y-up)
+
+    title.draw(at: NSPoint(x: textOriginX, y: cursorY))
+    cursorY -= gapTitleTagline + taglineSize.height
+    tagline.draw(in: NSRect(x: textOriginX, y: cursorY,
+                            width: textWidth, height: taglineSize.height + 4))
+    cursorY -= gapTaglineBadge + badgeSize.height
+    badge.draw(at: NSPoint(x: textOriginX, y: cursorY))
 
     return rep
 }
