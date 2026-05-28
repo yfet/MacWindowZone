@@ -137,6 +137,11 @@ final class WindowRestorer {
     }
 
     private func attemptRestore(window: AXWindow) {
+        // Never auto-move dialogs, sheets, popovers or floating panels — only
+        // standard top-level windows. They share the AXWindow role but a
+        // non-standard subrole, and an empty title collapses them onto the
+        // "untitled" memory key, snapping IDE popups to a remembered zone.
+        guard window.isStandardWindow else { return }
         if Settings.shared.ignoresAutoRestore(bundleID: window.bundleIdentifier) { return }
         guard let memory = WindowMemory.shared.lookup(bundleID: window.bundleIdentifier, windowKey: window.windowKey) else {
             return
