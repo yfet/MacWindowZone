@@ -71,6 +71,18 @@ struct AXWindow {
         return value
     }
 
+    var subrole: String? {
+        AXWindow.copyString(element, attribute: kAXSubroleAttribute as CFString)
+    }
+
+    /// Only standard top-level windows should be auto-restored. Dialogs,
+    /// sheets, popovers and floating panels share the `AXWindow` role but
+    /// carry a different subrole; moving them on open is disruptive (e.g.
+    /// IDE autocomplete/quick-open popups jumping to a remembered zone).
+    var isStandardWindow: Bool {
+        subrole == (kAXStandardWindowSubrole as String)
+    }
+
     /// A normalised "window key" used as part of the memory store key.
     /// We hash the title prefix so two browser tabs share a slot.
     var windowKey: String {
