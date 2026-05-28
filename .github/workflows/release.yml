@@ -14,7 +14,7 @@ permissions:
 
 jobs:
   build-and-release:
-    runs-on: macos-14  # Apple Silicon runner; we cross-compile both archs from here.
+    runs-on: macos-15  # Apple Silicon runner with a Swift 6 toolchain; we cross-compile both archs from here.
     timeout-minutes: 25
 
     steps:
@@ -44,6 +44,16 @@ jobs:
         with:
           # Safe to interpolate — `steps.tag.outputs.tag` has been regex-validated above.
           ref: ${{ steps.tag.outputs.tag }}
+
+      - name: Select Swift 6 toolchain
+        # Package.swift needs Swift 6 tools; the runner's default Xcode can be
+        # older (e.g. 15.4 → Swift 5.10), so pick the newest installed Xcode.
+        run: |
+          LATEST="$(ls -d /Applications/Xcode_*.app 2>/dev/null | sort -V | tail -n1)"
+          if [ -n "$LATEST" ]; then
+            echo "Selecting $LATEST"
+            sudo xcode-select -s "$LATEST/Contents/Developer"
+          fi
 
       - name: Show toolchain
         run: |
