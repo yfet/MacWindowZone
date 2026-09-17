@@ -146,11 +146,18 @@ final class WindowRestorer {
         guard let memory = WindowMemory.shared.lookup(bundleID: window.bundleIdentifier, windowKey: window.windowKey) else {
             return
         }
-        if let zoneID = memory.zoneID,
-           let screenID = memory.screenID,
+        if let screenID = memory.screenID,
            let screen = ScreenManager.screen(for: screenID) {
             let layout = ZoneStore.shared.layout(for: screenID)
-            if let zone = layout.zones.first(where: { $0.id == zoneID }) {
+            if let zoneIDs = memory.zoneIDs, zoneIDs.count >= 2 {
+                let zones = zoneIDs.compactMap { id in layout.zones.first { $0.id == id } }
+                if zones.count == zoneIDs.count {
+                    Snapper.snap(window: window, toZones: zones, on: screen)
+                    return
+                }
+            }
+            if let zoneID = memory.zoneID,
+               let zone = layout.zones.first(where: { $0.id == zoneID }) {
                 Snapper.snap(window: window, to: zone, on: screen)
                 return
             }
