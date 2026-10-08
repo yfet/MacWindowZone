@@ -158,7 +158,9 @@ final class DragSnapController {
     // Drag state
     private var draggingWindow: AXWindow?
     private var initialWindowFrameAX: CGRect?
-    private var initialMouseAX: CGPoint?
+    /// Latched once the candidate window's origin has actually moved.
+    /// Cursor travel alone (text selection, sliders) must not arm a snap.
+    private var windowOriginMoved = false
     private var overlaysByScreen: [String: DragSnapOverlay] = [:]
     private var overlayVisible = false
     /// Zones visited while the multi-select modifier is held, in visit order.
@@ -238,7 +240,6 @@ final class DragSnapController {
         Log.line("[MWZ DragSnap] mouseDown: candidate=\(window.bundleIdentifier) title=\(window.title) (via \(hit != nil ? "axHit" : sysFocus != nil ? "sysFocus" : "wsFocus"))")
         draggingWindow = window
         initialWindowFrameAX = window.frame
-        initialMouseAX = axPoint
         // Don't fire edge-snap if the press already sat in an edge buffer
         // (typical for a window parked under the menu bar).
         if let screen = ScreenManager.screenContaining(point: cocoaPoint) {
@@ -252,24 +253,16 @@ final class DragSnapController {
         guard draggingWindow != nil else { return }
 
         let mod = Settings.shared.snapModifier
-        // When a modifier is required, the user is being explicit — show the
-        // overlay as soon as the modifier is held, even before the window has
-        // measurably moved. Without a modifier, gate on actual window movement
-        // so we don't flash zones on selection-rect drags etc.
-        let modSatisfied = mod.isSatisfied(by: modifiers)
-        let movementGate: Bool
-        if mod == .none {
-            movementGate = dragHasMoved(mouseCocoa: cocoaPoint)
-        } else {
-            movementGate = true
-        }
-
-        let zoneMode = modSatisfied && movementGate
+        // A held modifier or a moving cursor is not a window drag. Shift-selecting
+        // text, or dragging a selection into the screen edge, must not preview
+        // or commit a snap — only a window whose origin has actually moved.
+        let moved = windowOriginHasMoved()
+        let zoneMode = mod.isSatisfied(by: modifiers) && moved
         if !zoneMode {
             selectedZoneIDs = []
             multiSelectScreenID = nil
         }
-        let edgeTarget = resolveEdgeTarget(at: cocoaPoint)
+        let edgeTarget = resolveEdgeTarget(at: cocoaPoint, windowMoved: moved)
         let edgeMode = edgeTarget != nil
 
         if zoneMode || edgeMode {
@@ -330,7 +323,7 @@ final class DragSnapController {
     private func resetDragState() {
         draggingWindow = nil
         initialWindowFrameAX = nil
-        initialMouseAX = nil
+        windowOriginMoved = false
         selectedZoneIDs = []
         multiSelectScreenID = nil
         edgeSnapTarget = nil
@@ -348,21 +341,19 @@ final class DragSnapController {
         )
     }
 
-    /// True once the window or the cursor has actually travelled — used to
-    /// ignore clicks and selection-rect drags.
-    private func dragHasMoved(mouseCocoa: NSPoint) -> Bool {
-        if let window = draggingWindow, let initial = initialWindowFrameAX,
-           let current = window.frame {
-            if hypot(current.minX - initial.minX, current.minY - initial.minY) >= 4 { return true }
+    /// True once the candidate window's origin has travelled at least 4 pt.
+    /// Latched so a later failed AX read doesn't hide the overlay mid-drag.
+    private func windowOriginHasMoved() -> Bool {
+        if windowOriginMoved { return true }
+        guard let initial = initialWindowFrameAX,
+              let current = draggingWindow?.frame else { return false }
+        if hypot(current.minX - initial.minX, current.minY - initial.minY) >= 4 {
+            windowOriginMoved = true
         }
-        if let initial = initialMouseAX, let primary = NSScreen.screens.first {
-            let ax = CGPoint(x: mouseCocoa.x, y: primary.frame.height - mouseCocoa.y)
-            if hypot(ax.x - initial.x, ax.y - initial.y) >= 8 { return true }
-        }
-        return false
+        return windowOriginMoved
     }
 
-    private func resolveEdgeTarget(at cocoaPoint: NSPoint) -> EdgeSnapTarget? {
+    private func resolveEdgeTarget(at cocoaPoint: NSPoint, windowMoved: Bool) -> EdgeSnapTarget? {
         guard Settings.shared.edgeSnapEnabled else {
             edgeSnapTarget = nil
             edgeSnapScreenID = nil
@@ -393,7 +384,7 @@ final class DragSnapController {
             edgeSnapScreenID = nil
             return nil
         }
-        guard dragHasMoved(mouseCocoa: cocoaPoint) else {
+        guard windowMoved else {
             edgeSnapTarget = nil
             edgeSnapScreenID = nil
             return nil
