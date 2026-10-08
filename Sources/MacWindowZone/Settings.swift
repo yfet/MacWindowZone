@@ -31,6 +31,55 @@ enum SnapModifier: String, CaseIterable {
         case .disabled: return false
         }
     }
+
+    /// Extra modifier held during a drag-snap to accumulate multiple zones.
+    /// Control by default; Option when Control is already the snap modifier
+    /// so the two gestures don't collide.
+    var multiSelectFlag: NSEvent.ModifierFlags {
+        self == .control ? .option : .control
+    }
+
+    func isMultiSelectSatisfied(by flags: NSEvent.ModifierFlags) -> Bool {
+        flags.contains(multiSelectFlag)
+    }
+
+    /// Status-menu hint for the multi-zone drag gesture. Empty when drag-snap is disabled.
+    var multiSelectHint: String {
+        switch self {
+        case .disabled:
+            return ""
+        case .control:
+            return "Hold ⌥ Option while dragging to select multiple zones"
+        default:
+            return "Hold ⌃ Control while dragging to select multiple zones"
+        }
+    }
+}
+
+/// How a taller-than-wide display treats Aero-style edge snaps.
+enum PortraitEdgeBehavior: String, CaseIterable {
+    /// Top edge fills the screen; left/right edges split top vs bottom half.
+    case topFillsSidesSplit
+    /// Every edge (including the top) splits top vs bottom half.
+    case allEdgesSplit
+    /// Identical to landscape: top fills, left/right are left/right halves.
+    case landscape
+
+    var displayName: String {
+        switch self {
+        case .topFillsSidesSplit: return "Top fills, sides split top/bottom"
+        case .allEdgesSplit:      return "All edges split top/bottom"
+        case .landscape:          return "Same as landscape (left/right halves)"
+        }
+    }
+
+    var shortName: String {
+        switch self {
+        case .topFillsSidesSplit: return "Top fills screen"
+        case .allEdgesSplit:      return "All edges split"
+        case .landscape:          return "Same as landscape"
+        }
+    }
 }
 
 /// User-tunable runtime settings. Persisted to UserDefaults.
@@ -42,6 +91,9 @@ final class Settings {
         static let gap = "MWZ.gap"
         static let snapModifier = "MWZ.snapModifier"
         static let restoreIgnored = "MWZ.restoreIgnored"
+        static let edgeSnapEnabled = "MWZ.edgeSnapEnabled"
+        static let edgeSnapBuffer = "MWZ.edgeSnapBuffer"
+        static let portraitEdgeBehavior = "MWZ.portraitEdgeBehavior"
     }
 
     /// Bundle IDs whose windows must NOT be auto-restored on launch.
@@ -90,6 +142,34 @@ final class Settings {
         }
     }
 
+    /// When true, dragging a window to a screen edge/corner shows an Aero-style
+    /// snap preview (no zone modifier required).
+    var edgeSnapEnabled: Bool {
+        didSet {
+            defaults.set(edgeSnapEnabled, forKey: Keys.edgeSnapEnabled)
+            NotificationCenter.default.post(name: .settingsChanged, object: nil)
+        }
+    }
+
+    /// Interior margin (points) that counts as "on the edge" of a display.
+    /// Wider values make snaps at the seam between extended displays hittable,
+    /// since macOS does not clamp the cursor there. Default: 24.
+    var edgeSnapBuffer: CGFloat {
+        didSet {
+            defaults.set(Double(edgeSnapBuffer), forKey: Keys.edgeSnapBuffer)
+            NotificationCenter.default.post(name: .settingsChanged, object: nil)
+        }
+    }
+
+    /// Edge-snap layout used on portrait (taller-than-wide) displays.
+    /// Default: top edge fills the screen; side edges split top/bottom.
+    var portraitEdgeBehavior: PortraitEdgeBehavior {
+        didSet {
+            defaults.set(portraitEdgeBehavior.rawValue, forKey: Keys.portraitEdgeBehavior)
+            NotificationCenter.default.post(name: .settingsChanged, object: nil)
+        }
+    }
+
     /// Set of bundle IDs whose windows are NOT auto-restored on launch.
     var ignoredForRestore: Set<String> {
         didSet {
@@ -127,6 +207,22 @@ final class Settings {
             self.ignoredForRestore = Set(stored)
         } else {
             self.ignoredForRestore = Settings.defaultIgnoredForRestore
+        }
+        if defaults.object(forKey: Keys.edgeSnapEnabled) != nil {
+            self.edgeSnapEnabled = defaults.bool(forKey: Keys.edgeSnapEnabled)
+        } else {
+            self.edgeSnapEnabled = true
+        }
+        if defaults.object(forKey: Keys.edgeSnapBuffer) != nil {
+            self.edgeSnapBuffer = CGFloat(defaults.double(forKey: Keys.edgeSnapBuffer))
+        } else {
+            self.edgeSnapBuffer = 24
+        }
+        if let raw = defaults.string(forKey: Keys.portraitEdgeBehavior),
+           let behavior = PortraitEdgeBehavior(rawValue: raw) {
+            self.portraitEdgeBehavior = behavior
+        } else {
+            self.portraitEdgeBehavior = .topFillsSidesSplit
         }
     }
 }

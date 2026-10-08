@@ -40,7 +40,7 @@
       "featureList": [
         "Per-display zone editor with layout templates",
         "Shared-edge resize between adjacent zones",
-        "Snap windows by hotkey or by drag",
+        "Snap windows by hotkey, by drag, across multiple zones, or to screen edges",
         "Per-window placement memory",
         "Configurable gap and snap modifier",
         "Browser-safe ignore list",
@@ -437,7 +437,7 @@
             <div class="feature">
                 <div class="icon-circle">⇧</div>
                 <h3>Snap by drag</h3>
-                <p>Hold the configured modifier (default <kbd>⇧ Shift</kbd>) while dragging a window. Drop into a zone — done.</p>
+                <p>Hold the configured modifier (default <kbd>⇧ Shift</kbd>) while dragging a window. Hold <kbd>⌃ Control</kbd> too to span several zones — two adjacent cells become a half, three become fullscreen. Drag to a screen edge or corner (no modifier) for fullscreen, halves, or quarters.</p>
             </div>
 
             <div class="feature">
@@ -502,6 +502,10 @@
                 <tr><td colspan="2" style="padding-top: 18px;"><strong>Snapping windows</strong></td></tr>
                 <tr><td>Snap focused window</td><td><kbd>⌃ Ctrl</kbd> + <kbd>⌥ Opt</kbd> + <kbd>1</kbd> through <kbd>9</kbd></td></tr>
                 <tr><td>Snap by drag</td><td>Hold <kbd>⇧ Shift</kbd>, drag a window, drop into a zone</td></tr>
+                <tr><td>Snap to several zones</td><td>While dragging, hold <kbd>⌃ Control</kbd> and drag across extra zones</td></tr>
+                <tr><td>Snap to fullscreen</td><td>Drag a window to the top edge of the screen</td></tr>
+                <tr><td>Snap to a half</td><td>Drag to the left or right edge (portrait sides: top/bottom half)</td></tr>
+                <tr><td>Snap to a quarter</td><td>Drag to a screen corner</td></tr>
                 <tr><td>From menu</td><td><em>Snap Focused Window ▸ [screen] ▸ [zone]</em></td></tr>
             </table>
         </div>

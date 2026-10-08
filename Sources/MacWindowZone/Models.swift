@@ -22,6 +22,13 @@ struct Zone: Codable, Identifiable, Hashable {
             height: fractionalRect.height * screenFrame.height
         )
     }
+
+    /// Bounding box of `zones` in screen coordinates. Used for multi-zone
+    /// drag-snap (two adjacent 2×2 cells become a half, three become fullscreen).
+    static func boundingRect(of zones: [Zone], in screenFrame: CGRect) -> CGRect? {
+        guard !zones.isEmpty else { return nil }
+        return zones.reduce(CGRect.null) { $0.union($1.absoluteRect(in: screenFrame)) }
+    }
 }
 
 struct FractionalRect: Codable, Hashable {
@@ -65,6 +72,9 @@ struct WindowMemoryEntry: Codable {
     let windowKey: String
     /// Optional zone snap target.
     var zoneID: UUID?
+    /// When a window was snapped to the union of several zones, those zone
+    /// IDs (used on restore to recompute the bounding box).
+    var zoneIDs: [UUID]?
     /// Screen on which the zone lives.
     var screenID: String?
     /// Absolute fallback frame (if no zone, or zone deleted).

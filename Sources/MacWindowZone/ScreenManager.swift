@@ -39,6 +39,13 @@ enum ScreenManager {
     }
 
     static func screenContaining(point: NSPoint) -> NSScreen? {
-        NSScreen.screens.first { $0.frame.contains(point) } ?? NSScreen.main
+        if let hit = NSScreen.screens.first(where: { $0.frame.contains(point) }) { return hit }
+        // CGRect.contains is max-exclusive, so the outer pixel of the last
+        // display (where the cursor actually rests) would otherwise miss.
+        return NSScreen.screens.first(where: { screen in
+            let frame = screen.frame
+            return point.x >= frame.minX && point.x <= frame.maxX &&
+                   point.y >= frame.minY && point.y <= frame.maxY
+        }) ?? NSScreen.main
     }
 }

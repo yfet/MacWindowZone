@@ -18,32 +18,135 @@ struct AXWindow {
 
     /// Set a frame in *AX/Quartz* coordinates (origin top-left of primary display).
     ///
-    /// We shrink-then-grow ONLY for cross-screen moves. On the same screen the
-    /// window already fits, and the shrink causes content-wrapping apps
-    /// (terminals, editors) to reflow at 100px and then sometimes fail to
-    /// reflow back to full width on grow.
+    /// Sequence:
+    /// 1. Temporarily clear `AXEnhancedUserInterface` on the app. Firefox,
+    ///    Chromium and several Electron apps ignore `AXSize` while that flag
+    ///    is on (they treat it as a VoiceOver probe).
+    /// 2. Size → position → size → position. Size-first so macOS will accept
+    ///    a frame that doesn't fit the *current* display; the second size
+    ///    catches apps that no-op the first call.
+    /// 3. Shrink-to-tiny only for cross-screen moves (same-screen shrinks
+    ///    reflow terminals/editors).
+    /// 4. If the app clamps to a minimum size, re-pin the window so it still
+    ///    covers the intended edges of `rect` and stays on-screen.
     @discardableResult
     func setFrame(_ rect: CGRect) -> Bool {
-        var position = rect.origin
-        var size = rect.size
-        guard let posValue = AXValueCreate(.cgPoint, &position),
-              let sizeValue = AXValueCreate(.cgSize, &size) else { return false }
-
-        let needsShrink = Self.movesAcrossScreens(from: frame, to: rect)
-
-        if needsShrink {
-            var tinySize = CGSize(width: 100, height: 100)
-            if let tinyValue = AXValueCreate(.cgSize, &tinySize) {
-                AXUIElementSetAttributeValue(element, kAXSizeAttribute as CFString, tinyValue)
+        let app = AXUIElementCreateApplication(pid)
+        let wasEnhanced = Self.copyBool(app, attribute: Self.enhancedUIAttribute)
+        if wasEnhanced == true {
+            Log.line("[MWZ AX] \(bundleIdentifier): disabling AXEnhancedUserInterface for resize")
+            Self.setBool(app, attribute: Self.enhancedUIAttribute, value: false)
+        }
+        defer {
+            if wasEnhanced == true {
+                Self.setBool(app, attribute: Self.enhancedUIAttribute, value: true)
             }
         }
 
-        let posResult = AXUIElementSetAttributeValue(element, kAXPositionAttribute as CFString, posValue)
-        let sizeResult = AXUIElementSetAttributeValue(element, kAXSizeAttribute as CFString, sizeValue)
-        // Re-apply position once — some apps clamp on resize.
-        AXUIElementSetAttributeValue(element, kAXPositionAttribute as CFString, posValue)
-        return posResult == .success && sizeResult == .success
+        let previous = frame
+        let needsShrink = Self.movesAcrossScreens(from: previous, to: rect)
+        if needsShrink {
+            _ = setSize(CGSize(width: 100, height: 100))
+        }
+
+        var sizeOK = setSize(rect.size)
+        var posOK = setPosition(rect.origin)
+        sizeOK = setSize(rect.size) || sizeOK
+        posOK = setPosition(rect.origin) || posOK
+
+        var actual = frame
+        // Completely ignored the size change — one more try after the first
+        // position has landed (Firefox sometimes needs this order).
+        if let previous, let current = actual,
+           Self.sizesMatch(current.size, previous.size, slop: 2),
+           !Self.sizesMatch(current.size, rect.size, slop: 2) {
+            Log.line("[MWZ AX] \(bundleIdentifier): size unchanged (\(current.size)), retrying")
+            sizeOK = setSize(rect.size) || sizeOK
+            posOK = setPosition(rect.origin) || posOK
+            actual = frame
+        }
+
+        if let current = actual, !Self.sizesMatch(current.size, rect.size, slop: 2) {
+            let fitted = Self.fit(actualSize: current.size, into: rect)
+            if hypot(fitted.minX - current.minX, fitted.minY - current.minY) > 1 {
+                Log.line("[MWZ AX] \(bundleIdentifier): min-size clamp \(current.size) vs \(rect.size); pinning to \(fitted.origin)")
+                _ = setPosition(fitted.origin)
+            } else {
+                Log.line("[MWZ AX] \(bundleIdentifier): size clamped to \(current.size) (wanted \(rect.size))")
+            }
+        }
+
+        return posOK && sizeOK
     }
+
+    @discardableResult
+    private func setPosition(_ point: CGPoint) -> Bool {
+        var value = point
+        guard let ax = AXValueCreate(.cgPoint, &value) else { return false }
+        return AXUIElementSetAttributeValue(element, kAXPositionAttribute as CFString, ax) == .success
+    }
+
+    @discardableResult
+    private func setSize(_ size: CGSize) -> Bool {
+        var value = size
+        guard let ax = AXValueCreate(.cgSize, &value) else { return false }
+        return AXUIElementSetAttributeValue(element, kAXSizeAttribute as CFString, ax) == .success
+    }
+
+    /// Place an oversized window so it still covers as much of `target` as
+    /// possible and stays inside the destination display's visible frame.
+    private static func fit(actualSize: CGSize, into target: CGRect) -> CGRect {
+        let screen = screen(forAXRect: target)
+        let vfAX: CGRect = {
+            guard let screen else { return target }
+            return ScreenManager.cocoaToAX(screen.visibleFrame)
+        }()
+        let slop: CGFloat = 16
+        let x = fitAxis(
+            targetMin: target.minX, targetMax: target.maxX,
+            actual: actualSize.width,
+            screenMin: vfAX.minX, screenMax: vfAX.maxX,
+            flushMin: abs(target.minX - vfAX.minX) < slop,
+            flushMax: abs(target.maxX - vfAX.maxX) < slop
+        )
+        let y = fitAxis(
+            targetMin: target.minY, targetMax: target.maxY,
+            actual: actualSize.height,
+            screenMin: vfAX.minY, screenMax: vfAX.maxY,
+            flushMin: abs(target.minY - vfAX.minY) < slop,
+            flushMax: abs(target.maxY - vfAX.maxY) < slop
+        )
+        return CGRect(origin: CGPoint(x: x, y: y), size: actualSize)
+    }
+
+    private static func fitAxis(
+        targetMin: CGFloat, targetMax: CGFloat,
+        actual: CGFloat,
+        screenMin: CGFloat, screenMax: CGFloat,
+        flushMin: Bool, flushMax: Bool
+    ) -> CGFloat {
+        var x: CGFloat
+        if actual <= (targetMax - targetMin) + 2 {
+            x = targetMin
+        } else if flushMin && !flushMax {
+            x = targetMin
+        } else if flushMax && !flushMin {
+            x = targetMax - actual
+        } else if flushMin && flushMax {
+            x = targetMin
+        } else {
+            x = (targetMin + targetMax - actual) / 2
+        }
+        x = min(x, screenMax - actual)
+        x = max(x, screenMin)
+        return x
+    }
+
+    private static func sizesMatch(_ a: CGSize, _ b: CGSize, slop: CGFloat) -> Bool {
+        abs(a.width - b.width) <= slop && abs(a.height - b.height) <= slop
+    }
+
+    private static let enhancedUIAttribute = "AXEnhancedUserInterface" as CFString
 
     /// AX → screen mapping: returns the NSScreen containing the center of
     /// `axRect`. Returns nil if no screen contains it.
@@ -116,6 +219,17 @@ struct AXWindow {
         var raw: CFTypeRef?
         guard AXUIElementCopyAttributeValue(element, attribute, &raw) == .success else { return nil }
         return raw as? String
+    }
+
+    private static func copyBool(_ element: AXUIElement, attribute: CFString) -> Bool? {
+        var raw: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(element, attribute, &raw) == .success else { return nil }
+        return raw as? Bool
+    }
+
+    @discardableResult
+    private static func setBool(_ element: AXUIElement, attribute: CFString, value: Bool) -> Bool {
+        AXUIElementSetAttributeValue(element, attribute, value as CFBoolean) == .success
     }
 }
 

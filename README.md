@@ -25,7 +25,10 @@ A native macOS clone of Windows **FancyZones** — define rectangular zones on e
 - **Shift-Click / Ctrl-Click splits** — split a zone in half (vertically or horizontally) with a single click.
 - **Snap by hotkey** — `⌃⌥1` … `⌃⌥9` snap the focused window to zone 1…9 on the screen that contains it.
 - **Snap by drag** — hold the configured modifier (default `⇧ Shift`) while dragging a window; the zone overlay appears and snap happens on release inside a zone.
+- **Multi-zone drag** — while the overlay is showing, hold `⌃ Control` and drag across additional zones. The highlight grows to the bounding box of every zone you visit — two adjacent cells in a 2×2 become a half, three become fullscreen. (If the drag modifier is itself Control, hold `⌥ Option` instead.)
 - **Configurable drag modifier** — `Shift`, `Option`, `Command`, `Control`, none (always), or disabled.
+- **Snap to screen edges** — drag a window to the top of the display for fullscreen, to the left/right edges for halves, to a corner for a quarter. No modifier needed. Portrait displays are configurable: top edge fills the screen with sides splitting top/bottom (default), every edge splits top/bottom, or the same left/right halves as landscape.
+- **Adjustable edge buffer** — how close the cursor must be to a screen edge to snap (default 24 pt). Widen this if you use side-by-side displays: macOS does not stop the cursor at the seam.
 - **Configurable gap** — visual breathing room between snapped windows (default 4 pt, preset choices 0–24 pt, or custom).
 - **Window memory** — when a window opens with the same app bundle + title prefix as a previously-snapped one, MacWindowZone restores it to its zone (or fallback frame).
 - **Browser-safe ignore list** — Chrome, Edge, Brave, Safari, Firefox, Arc, Vivaldi, Opera (and their Beta/Dev/Canary variants) are excluded from auto-restore by default to avoid interfering with their own session/tab restoration. Configurable per-app via the menu.
@@ -117,6 +120,8 @@ Cursor changes automatically when hovering edges/corners (resize cursors) or the
 
 - **By keyboard:** focus a window, press `⌃⌥1` for zone 1, `⌃⌥2` for zone 2, etc. Snaps within the screen that currently contains the window.
 - **By drag:** drag a window while holding the configured modifier (default `Shift`). The zone overlay fades in across every display, the zone under the cursor highlights, and releasing inside a zone snaps the window. Releasing outside any zone is a no-op.
+- **Multi-zone:** while that overlay is visible, hold `⌃ Control` and drag across more zones. The highlight becomes the bounding box of the visited zones (two adjacent 2×2 cells → half, three → fullscreen). Release to snap. If Control is the drag modifier, use `⌥ Option` for this.
+- **By screen edge:** drag a window (no modifier) to the top of the screen for fullscreen, to the left or right edge for a half, or to a corner for a quarter. A highlight preview appears before you release. On a vertical monitor the default is the same top-edge fullscreen, with the side edges splitting top vs bottom half — change this under *Portrait Edges* in the menu. Widen *Edge Snap Buffer* if the cursor overshoots the seam between two displays.
 - **From the menu:** *Snap Focused Window → [screen] → [zone]*.
 
 ### Window memory
@@ -134,6 +139,9 @@ Snap Focused Window ▸ …                       sub-menu per screen
 Gap Between Windows: 4 px ▸ …                 visual gap between snapped windows
 Drag Modifier: Shift (⇧) ▸ …                  what modifier (if any) triggers snap-on-drag
 Snap on Drag                                  master toggle for drag snap
+Snap to Screen Edges                          Aero-style edge/corner snap while dragging
+Edge Snap Buffer: 24 px ▸ …                   how close to an edge counts as a snap
+Portrait Edges: Top fills screen ▸ …          vertical-display edge-snap layout
 Restore Windows on Launch                     master toggle for the window restorer
 Ignored for Auto-Restore (N) ▸ …              per-app exclusion list
 Launch at Login                               toggle SMAppService registration
@@ -160,6 +168,7 @@ Sources/MacWindowZone/
 ├── WindowAX.swift           # Thin wrapper over the Accessibility API
 ├── HotkeyManager.swift      # Carbon RegisterEventHotKey for ⌃⌥1–⌃⌥9
 ├── DragSnap.swift           # Global mouse monitor → overlay + snap on release
+├── EdgeSnap.swift           # Aero-style edge/corner hit-testing (halves, quarters, full)
 ├── Snapper.swift            # Applies a Zone to an AXWindow + records memory
 ├── ZoneTemplate.swift       # Predefined layouts + thumbnail rendering
 ├── TemplatePicker.swift     # Per-screen template picker NSWindow
@@ -196,7 +205,7 @@ AppKit's 5-arg `initWithContentRect:styleMask:backing:defer:screen:` internally 
 
 ## Known limitations (v0.1)
 
-- Some apps (Electron, certain Java apps) clamp programmatic resize requests.
+- Some apps (Firefox, Chromium, Electron, certain Java apps) ignore or clamp programmatic resize. MacWindowZone disables `AXEnhancedUserInterface` around the resize and retries size+position, which fixes Firefox in most cases. Apps with a hard minimum size still cannot be forced smaller — that limit is the app's, not macOS's Accessibility API — but the window is pinned so it covers as much of the zone as possible and stays on-screen.
 - Window-key matching uses the first 60 chars of the title — good for most apps, fails on document-style apps with constantly-changing titles (falls back to remembering the last frame instead of the zone).
 - The app is ad-hoc signed by the build script. Accessibility permission can be invalidated on rebuild (binary CD-hash changes). With a Developer ID cert this issue goes away.
 - The browser ignore list disables auto-restore for browsers; manual snap (Shift+drag, hotkeys, menu) still works for them.
