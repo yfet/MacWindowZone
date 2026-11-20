@@ -29,7 +29,8 @@ A native macOS clone of Windows **FancyZones** — define rectangular zones on e
 - **Configurable drag modifier** — `Shift`, `Option`, `Command`, `Control`, none (always), or disabled.
 - **Snap to screen edges** — drag a window to the top of the display for fullscreen, to the left/right edges for halves, to a corner for a quarter. No modifier needed; holding the zone modifier turns it off so zones near the border still work. Off by default on macOS 15+ while the system's own *Drag windows to screen edges to tile* is on (the two would fight) — turn that off in System Settings ▸ Desktop & Dock, then enable *Snap to Screen Edges*. Portrait displays are configurable: top edge fills the screen with sides splitting top/bottom (default), every edge splits top/bottom, or the same left/right halves as landscape.
 - **Adjustable edge buffer** — how close the cursor must be to a screen edge to snap (default 24 pt). Widen this if you use side-by-side displays: macOS does not stop the cursor at the seam.
-- **Configurable gap** — visual breathing room between snapped windows (default 4 pt, preset choices 0–24 pt, or custom).
+- **Configurable gap** — visual breathing room between snapped windows (default 4 pt, preset choices 0–24 pt, or custom). The same gap is left at the screen edges, so spacing is equal everywhere.
+- **Editor grid + magnetic edges** — in the zone editor, zone edges snap to a fixed grid (default 16 pt, configurable or off under *Editor Grid*) and stick to the screen edges and to other zones' edges when they come within 10 pt. Hold `⌘` while dragging to place freely.
 - **Window memory** — when a window opens with the same app bundle + title prefix as a previously-snapped one, MacWindowZone restores it to its zone (or fallback frame).
 - **Browser-safe ignore list** — Chrome, Edge, Brave, Safari, Firefox, Arc, Vivaldi, Opera (and their Beta/Dev/Canary variants) are excluded from auto-restore by default to avoid interfering with their own session/tab restoration. Configurable per-app via the menu.
 - **Cross-screen aware** — accurate AX↔Cocoa coordinate conversion. The shrink-then-grow dance for cross-screen snaps is skipped on same-screen snaps so content-wrapping apps (terminals, editors) keep their layout.
@@ -110,6 +111,7 @@ swift scripts/generate-icon.swift
 | Drag an edge or corner | Resize (shared edges move adjacent zones together) |
 | `⇧ Shift + Click` inside a zone | Split vertically into two equal halves |
 | `⌃ Control + Click` inside a zone | Split horizontally into two equal halves |
+| Hold `⌘` while dragging | Ignore the grid and magnetic edges |
 | `Delete` / `Backspace` | Remove the selected zone (neighbours absorb the space) |
 | `⌘R` | Reset the current screen to defaults |
 | `Esc` / Done button | Exit the editor |

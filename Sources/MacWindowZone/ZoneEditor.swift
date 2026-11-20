@@ -362,29 +362,52 @@ final class ZoneEditorView: NSView {
             }
         }
         selectedZoneID = nil
-        drag = .create(start: p, current: p)
+        let start = snapping(event) ? snapPoint(p, zones: layout.zones) : p
+        drag = .create(start: start, current: start)
         needsDisplay = true
     }
 
     override func mouseDragged(with event: NSEvent) {
         let p = viewPoint(from: event)
+        let snaps = snapping(event)
         switch drag {
         case .create(let start, _):
-            drag = .create(start: start, current: p)
+            drag = .create(start: start, current: snaps ? snapPoint(p, zones: layout.zones) : p)
         case .move(let id, let offset, let originalSize):
+            let others = layout.zones.filter { $0.id != id }
             updateZone(id: id) { zone, vf in
+                var nx = p.x - offset.width
+                var ny = p.y - offset.height
+                if snaps {
+                    nx = snapSpan(lo: nx, size: originalSize.width, axis: .x, zones: others)
+                    ny = snapSpan(lo: ny, size: originalSize.height, axis: .y, zones: others)
+                }
                 // Clamp the new origin so the rect stays inside vf.
                 let minX = vf.minX
                 let maxX = vf.maxX - originalSize.width
                 let minY = vf.minY
                 let maxY = vf.maxY - originalSize.height
-                let nx = (maxX > minX) ? max(minX, min(p.x - offset.width,  maxX)) : minX
-                let ny = (maxY > minY) ? max(minY, min(p.y - offset.height, maxY)) : minY
+                nx = (maxX > minX) ? max(minX, min(nx, maxX)) : minX
+                ny = (maxY > minY) ? max(minY, min(ny, maxY)) : minY
                 let rect = NSRect(origin: NSPoint(x: nx, y: ny), size: originalSize)
                 zone.fractionalRect = FractionalRect.from(absolute: rect, in: vf)
             }
         case .resize(_, let originalLayout, let originalRect, let sides):
-            applySharedResize(originalLayout: originalLayout, originalRect: originalRect, sides: sides, cursor: p)
+            var q = p
+            if snaps {
+                // Snap against the layout as it was at mouseDown, minus the
+                // edge being dragged — otherwise it would stick to itself.
+                let zones = originalLayout.zones
+                if sides.contains(.left) || sides.contains(.right) {
+                    let oldX = sides.contains(.left) ? originalRect.minX : originalRect.maxX
+                    q.x = snap(p.x, axis: .x, zones: zones, ignoringEdge: oldX)
+                }
+                if sides.contains(.top) || sides.contains(.bottom) {
+                    let oldY = sides.contains(.top) ? originalRect.maxY : originalRect.minY
+                    q.y = snap(p.y, axis: .y, zones: zones, ignoringEdge: oldY)
+                }
+            }
+            applySharedResize(originalLayout: originalLayout, originalRect: originalRect, sides: sides, cursor: q)
         case .none:
             break
         }
@@ -706,6 +729,70 @@ final class ZoneEditorView: NSView {
         needsDisplay = true
     }
 
+    // MARK: Snapping (grid + magnetic edges)
+
+    private enum Axis { case x, y }
+
+    /// How close (points) an edge must get to a screen/zone edge to stick to it.
+    private static let magnetDistance: CGFloat = 10
+
+    /// Holding ⌘ while dragging places zones freely.
+    private func snapping(_ event: NSEvent) -> Bool {
+        !event.modifierFlags.contains(.command)
+    }
+
+    /// Nearest screen edge or zone edge within `magnetDistance`, if any.
+    /// Edges within 1.5 pt of `ignoringEdge` are skipped (the edge being dragged).
+    private func magnetTarget(_ v: CGFloat, axis: Axis, zones: [Zone], ignoringEdge: CGFloat? = nil) -> CGFloat? {
+        let vf = visibleFrameInView()
+        var candidates: [CGFloat] = axis == .x ? [vf.minX, vf.maxX] : [vf.minY, vf.maxY]
+        for zone in zones {
+            let r = zone.absoluteRect(in: vf)
+            candidates += axis == .x ? [r.minX, r.maxX] : [r.minY, r.maxY]
+        }
+        if let ignoringEdge {
+            candidates.removeAll { abs($0 - ignoringEdge) < 1.5 }
+        }
+        guard let best = candidates.min(by: { abs($0 - v) < abs($1 - v) }),
+              abs(best - v) <= Self.magnetDistance else { return nil }
+        return best
+    }
+
+    /// Nearest grid line. The grid is anchored at the top-left of the visible
+    /// frame, so the menu-bar edge and the left edge are always on it.
+    private func gridValue(_ v: CGFloat, axis: Axis) -> CGFloat {
+        let step = Settings.shared.editorGridStep
+        guard step >= 1 else { return v }
+        let vf = visibleFrameInView()
+        switch axis {
+        case .x:
+            let g = vf.minX + ((v - vf.minX) / step).rounded() * step
+            return min(max(g, vf.minX), vf.maxX)
+        case .y:
+            let g = vf.maxY - ((vf.maxY - v) / step).rounded() * step
+            return min(max(g, vf.minY), vf.maxY)
+        }
+    }
+
+    private func snap(_ v: CGFloat, axis: Axis, zones: [Zone], ignoringEdge: CGFloat? = nil) -> CGFloat {
+        magnetTarget(v, axis: axis, zones: zones, ignoringEdge: ignoringEdge) ?? gridValue(v, axis: axis)
+    }
+
+    private func snapPoint(_ p: NSPoint, zones: [Zone]) -> NSPoint {
+        NSPoint(x: snap(p.x, axis: .x, zones: zones), y: snap(p.y, axis: .y, zones: zones))
+    }
+
+    /// Snap a moving span [lo, lo+size]: whichever end is closest to a magnet
+    /// wins; otherwise the end on the grid's anchor side (left / top) goes on the grid.
+    private func snapSpan(lo: CGFloat, size: CGFloat, axis: Axis, zones: [Zone]) -> CGFloat {
+        let hi = lo + size
+        let loHit = magnetTarget(lo, axis: axis, zones: zones).map { $0 - lo }
+        let hiHit = magnetTarget(hi, axis: axis, zones: zones).map { $0 - hi }
+        let shift = [loHit, hiHit].compactMap { $0 }.min(by: { abs($0) < abs($1) })
+        if let shift { return lo + shift }
+        return axis == .x ? gridValue(lo, axis: .x) : gridValue(hi, axis: .y) - size
+    }
+
     private func updateZone(id: UUID, mutate: (inout Zone, NSRect) -> Void) {
         let vf = visibleFrameInView()
         guard var zone = layout.zones.first(where: { $0.id == id }) else { return }
@@ -729,14 +816,36 @@ final class ZoneEditorView: NSView {
         path.lineWidth = 2
         path.stroke()
 
-        // Visual gap so adjacent zones look like distinct tiles. The HIT TEST
-        // still uses the full rect, so clicking in the visual gap between two
-        // zones lands on the nearest zone's edge band (resize) — which is what
-        // the user wants when grabbing a shared divider.
-        let visualInset: CGFloat = 4
+        // Editor grid. Drawn no denser than every 12 pt so a fine step
+        // doesn't turn into a grey wash; edges still snap to every step.
+        let step = Settings.shared.editorGridStep
+        if step >= 1 {
+            let drawStep = step * max(1, (12 / step).rounded(.up))
+            let grid = NSBezierPath()
+            var x = vf.minX + drawStep
+            while x < vf.maxX - 0.5 {
+                grid.move(to: NSPoint(x: x, y: vf.minY)); grid.line(to: NSPoint(x: x, y: vf.maxY))
+                x += drawStep
+            }
+            var y = vf.maxY - drawStep
+            while y > vf.minY + 0.5 {
+                grid.move(to: NSPoint(x: vf.minX, y: y)); grid.line(to: NSPoint(x: vf.maxX, y: y))
+                y -= drawStep
+            }
+            grid.lineWidth = 1
+            NSColor.white.withAlphaComponent(0.07).setStroke()
+            grid.stroke()
+        }
+
+        // Zones are drawn where their windows will land: the same gap between
+        // neighbours and at the screen edges (min 2 pt so tiles stay distinct).
+        // The HIT TEST still uses the full rect, so clicking in the gap
+        // between two zones lands on the nearest zone's edge band (resize) —
+        // which is what the user wants when grabbing a shared divider.
+        let visualGap = max(Settings.shared.gap, 2)
 
         for (zone, rect) in zoneRectsInView() {
-            let drawn = rect.insetBy(dx: visualInset, dy: visualInset)
+            let drawn = Snapper.gappedRect(rect, in: vf, gap: visualGap)
             let isSelected = zone.id == selectedZoneID
             let fillColor = (isSelected ? NSColor.systemBlue : NSColor.systemTeal).withAlphaComponent(0.25)
             let strokeColor = (isSelected ? NSColor.systemBlue : NSColor.systemTeal).withAlphaComponent(0.95)
@@ -772,7 +881,7 @@ final class ZoneEditorView: NSView {
         }
 
         // Help banner.
-        let help = "Click+drag empty to create  ·  drag inside a zone to move  ·  drag edges/corners to resize  ·  ⇧Click=split vertical  ·  ⌃Click=split horizontal  ·  Delete to remove  ·  ⌘R reset  ·  Esc"
+        let help = "Click+drag empty to create  ·  drag inside a zone to move  ·  drag edges/corners to resize  ·  ⇧Click=split vertical  ·  ⌃Click=split horizontal  ·  Delete to remove  ·  hold ⌘ to ignore grid  ·  ⌘R reset  ·  Esc"
         let attrs: [NSAttributedString.Key: Any] = [
             .font: NSFont.systemFont(ofSize: 14, weight: .medium),
             .foregroundColor: NSColor.white

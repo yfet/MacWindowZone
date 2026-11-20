@@ -43,6 +43,26 @@ enum Snapper {
         )
     }
 
+    /// Window frame for a zone rect, leaving the same `gap` everywhere:
+    /// half a gap on sides shared with a neighbour (the neighbour adds the
+    /// other half), a full gap on sides that touch the visible frame.
+    /// `rect` and `vf` must be in the same coordinate space.
+    static func gappedRect(_ rect: CGRect, in vf: CGRect, gap: CGFloat) -> CGRect {
+        let half = gap / 2
+        let tol: CGFloat = 1
+        let l = abs(rect.minX - vf.minX) < tol ? gap : half
+        let r = abs(rect.maxX - vf.maxX) < tol ? gap : half
+        let b = abs(rect.minY - vf.minY) < tol ? gap : half
+        let t = abs(rect.maxY - vf.maxY) < tol ? gap : half
+        let out = CGRect(
+            x: rect.minX + l,
+            y: rect.minY + b,
+            width: rect.width - l - r,
+            height: rect.height - b - t
+        )
+        return (out.width > 0 && out.height > 0) ? out : rect.insetBy(dx: half, dy: half)
+    }
+
     @discardableResult
     private static func snap(
         window: AXWindow,
@@ -51,10 +71,7 @@ enum Snapper {
         zoneID: UUID?,
         zoneIDs: [UUID]?
     ) -> Bool {
-        // Apply half-gap inset on every side so two neighbouring zones leave
-        // exactly `Settings.shared.gap` points between their windows.
-        let half = Settings.shared.gap / 2.0
-        let cocoaRect = raw.insetBy(dx: half, dy: half)
+        let cocoaRect = gappedRect(raw, in: screen.visibleFrame, gap: Settings.shared.gap)
         let axRect = ScreenManager.cocoaToAX(cocoaRect)
         let ok = window.setFrame(axRect)
         if ok {

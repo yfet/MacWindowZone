@@ -143,6 +143,35 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let customGap = NSMenuItem(title: "Custom…", action: #selector(promptCustomGap), keyEquivalent: "")
         customGap.target = self
         gapMenu.addItem(customGap)
+        gapMenu.addItem(.separator())
+        let gapHint = NSMenuItem(title: "Same gap at screen edges and between windows", action: nil, keyEquivalent: "")
+        gapHint.isEnabled = false
+        gapMenu.addItem(gapHint)
+
+        let gridMenu = NSMenu(title: "Editor Grid")
+        let gridStep = Settings.shared.editorGridStep
+        let gridItem = NSMenuItem(
+            title: gridStep >= 1 ? String(format: "Editor Grid: %.0f px", gridStep) : "Editor Grid: Off",
+            action: nil,
+            keyEquivalent: ""
+        )
+        gridItem.submenu = gridMenu
+        menu.addItem(gridItem)
+        for preset: CGFloat in [0, 8, 10, 16, 20, 24, 32, 48] {
+            let m = NSMenuItem(
+                title: preset == 0 ? "Off" : "\(Int(preset)) px",
+                action: #selector(setGridFromMenu(_:)),
+                keyEquivalent: ""
+            )
+            m.representedObject = preset
+            m.state = abs(gridStep - preset) < 0.5 ? .on : .off
+            m.target = self
+            gridMenu.addItem(m)
+        }
+        gridMenu.addItem(.separator())
+        let gridHint = NSMenuItem(title: "Edges also snap to the screen and other zones · ⌘ = no snap", action: nil, keyEquivalent: "")
+        gridHint.isEnabled = false
+        gridMenu.addItem(gridHint)
 
         let dragItem = NSMenuItem(
             title: "Snap on Drag",
@@ -415,6 +444,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard let raw = sender.representedObject as? String,
               let mod = SnapModifier(rawValue: raw) else { return }
         Settings.shared.snapModifier = mod
+        refreshMenu()
+    }
+
+    @objc private func setGridFromMenu(_ sender: NSMenuItem) {
+        guard let value = sender.representedObject as? CGFloat else { return }
+        Settings.shared.editorGridStep = value
         refreshMenu()
     }
 
