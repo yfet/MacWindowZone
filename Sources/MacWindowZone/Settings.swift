@@ -8,7 +8,7 @@ enum SnapModifier: String, CaseIterable {
     case option
     case command
     case control
-    case disabled  // never auto-snap on drag
+    case disabled  // never show the zone overlay on drag (edge snap has its own toggle)
 
     var displayName: String {
         switch self {
@@ -17,7 +17,7 @@ enum SnapModifier: String, CaseIterable {
         case .option:   return "Option (⌥)"
         case .command:  return "Command (⌘)"
         case .control:  return "Control (⌃)"
-        case .disabled: return "Disabled"
+        case .disabled: return "Disabled (zone overlay off)"
         }
     }
 
@@ -142,8 +142,22 @@ final class Settings {
         }
     }
 
+    /// True when macOS's own "Drag windows to screen edges to tile" (macOS 15+)
+    /// is on. It reacts to the same gestures as our edge snap, so running both
+    /// makes them race on mouse-up. The key is absent until the user changes
+    /// the setting, and the system default is on.
+    static var nativeEdgeTilingEnabled: Bool {
+        guard #available(macOS 15, *) else { return false }
+        let value = CFPreferencesCopyAppValue(
+            "EnableTilingByEdgeDrag" as CFString,
+            "com.apple.WindowManager" as CFString
+        )
+        return (value as? Bool) ?? true
+    }
+
     /// When true, dragging a window to a screen edge/corner shows an Aero-style
-    /// snap preview (no zone modifier required).
+    /// snap preview (no zone modifier required). Defaults to off when macOS's
+    /// native edge tiling is on, so the two don't fight.
     var edgeSnapEnabled: Bool {
         didSet {
             defaults.set(edgeSnapEnabled, forKey: Keys.edgeSnapEnabled)
@@ -211,7 +225,7 @@ final class Settings {
         if defaults.object(forKey: Keys.edgeSnapEnabled) != nil {
             self.edgeSnapEnabled = defaults.bool(forKey: Keys.edgeSnapEnabled)
         } else {
-            self.edgeSnapEnabled = true
+            self.edgeSnapEnabled = !Settings.nativeEdgeTilingEnabled
         }
         if defaults.object(forKey: Keys.edgeSnapBuffer) != nil {
             self.edgeSnapBuffer = CGFloat(defaults.double(forKey: Keys.edgeSnapBuffer))

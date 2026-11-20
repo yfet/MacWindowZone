@@ -189,6 +189,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         edgeItem.state = Settings.shared.edgeSnapEnabled ? .on : .off
         edgeItem.target = self
         menu.addItem(edgeItem)
+        if Settings.shared.edgeSnapEnabled && Settings.nativeEdgeTilingEnabled {
+            let clash = NSMenuItem(
+                title: "⚠︎ macOS edge tiling is also on — turn one off (Desktop & Dock)",
+                action: nil,
+                keyEquivalent: ""
+            )
+            clash.isEnabled = false
+            menu.addItem(clash)
+        }
 
         let bufMenu = NSMenu(title: "Edge Snap Buffer")
         let bufItem = NSMenuItem(
