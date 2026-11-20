@@ -175,6 +175,27 @@ final class DragSnapController {
     /// a title bar that's already against the top of the screen doesn't snap.
     private var edgeSnapArmed = false
     private var showsZoneLayout = false
+    /// True when `selectedZoneIDs` was built with the multi-select modifier
+    /// (kept after key-up); false when it's just the zones near the cursor.
+    private var selectionIsAccumulated = false
+
+    /// Distance (points) from the cursor within which a zone counts as
+    /// hovered. Lets the gap between spaced-out zones, or the corner where
+    /// four meet, select all of them (FancyZones' "sensitivity radius").
+    private static let sensitivityRadius: CGFloat = 16
+
+    /// Zones containing `p` or within `sensitivityRadius` of it, nearest first.
+    static func zones(near p: NSPoint, in zones: [Zone], visibleFrame vf: CGRect) -> [Zone] {
+        zones.compactMap { zone -> (Zone, CGFloat)? in
+            let r = zone.absoluteRect(in: vf)
+            let dx = max(r.minX - p.x, 0, p.x - r.maxX)
+            let dy = max(r.minY - p.y, 0, p.y - r.maxY)
+            let d = hypot(dx, dy)
+            return d <= sensitivityRadius ? (zone, d) : nil
+        }
+        .sorted { $0.1 < $1.1 }
+        .map(\.0)
+    }
 
     private init() {}
 
@@ -341,6 +362,7 @@ final class DragSnapController {
         edgeSnapScreenID = nil
         edgeSnapArmed = false
         showsZoneLayout = false
+        selectionIsAccumulated = false
     }
 
     private func edgeHit(at point: NSPoint, on screen: NSScreen, buffer: CGFloat) -> EdgeSnapTarget? {
@@ -436,6 +458,7 @@ final class DragSnapController {
         edgeSnapTarget = nil
         edgeSnapScreenID = nil
         showsZoneLayout = false
+        selectionIsAccumulated = false
     }
 
     private func updateHighlight(cocoaPoint: NSPoint, modifiers: NSEvent.ModifierFlags) {
@@ -443,7 +466,7 @@ final class DragSnapController {
         let vf = screen.visibleFrame
         let id = ScreenManager.identifier(for: screen)
         let layout = ZoneStore.shared.layout(for: id)
-        let hovered = layout.zones.first(where: { $0.absoluteRect(in: vf).contains(cocoaPoint) })
+        let nearby = Self.zones(near: cocoaPoint, in: layout.zones, visibleFrame: vf)
         let multi = Settings.shared.snapModifier.isMultiSelectSatisfied(by: modifiers)
         let zoneMode = showsZoneLayout
         let edgeTarget = edgeSnapTarget
@@ -455,21 +478,26 @@ final class DragSnapController {
                     selectedZoneIDs = []
                     multiSelectScreenID = id
                 }
-                if let hovered, !selectedZoneIDs.contains(hovered.id) {
-                    selectedZoneIDs.append(hovered.id)
-                    Log.line("[MWZ DragSnap] multi-select +\(hovered.name) (\(selectedZoneIDs.count) zones)")
+                for zone in nearby where !selectedZoneIDs.contains(zone.id) {
+                    selectedZoneIDs.append(zone.id)
+                    Log.line("[MWZ DragSnap] multi-select +\(zone.name) (\(selectedZoneIDs.count) zones)")
                 }
-            } else if selectedZoneIDs.count >= 2, multiSelectScreenID == id {
+                selectionIsAccumulated = true
+            } else if selectionIsAccumulated, selectedZoneIDs.count >= 2, multiSelectScreenID == id {
                 // Keep the accumulated set after Control is released, so a slightly
                 // early key-up still snaps to the union. Reset only when the cursor
-                // enters a zone that isn't already selected.
-                if let hovered, !selectedZoneIDs.contains(hovered.id) {
-                    selectedZoneIDs = [hovered.id]
-                    multiSelectScreenID = id
+                // reaches a zone that isn't already selected.
+                if !nearby.isEmpty, !nearby.allSatisfy({ selectedZoneIDs.contains($0.id) }) {
+                    selectedZoneIDs = nearby.map(\.id)
+                    selectionIsAccumulated = false
                 }
             } else {
-                selectedZoneIDs = hovered.map { [$0.id] } ?? []
-                multiSelectScreenID = hovered != nil ? id : nil
+                // Every zone within the sensitivity radius: the cursor in the
+                // gap between zones (or at a corner where four meet) selects
+                // all of them and the window spans their bounding box.
+                selectedZoneIDs = nearby.map(\.id)
+                multiSelectScreenID = nearby.isEmpty ? nil : id
+                selectionIsAccumulated = false
             }
         }
 

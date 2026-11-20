@@ -188,8 +188,8 @@ final class Settings {
     /// Fixed step (points) of the zone editor's grid, anchored at the top-left
     /// of the visible frame. Zone edges snap to it while editing; screen edges
     /// and other zones' edges snap magnetically on top. 0 = grid off.
-    /// Default: 16 (a multiple of the common 8-pt rhythm, fine enough to place
-    /// zones freely, coarse enough to line them up by eye).
+    /// Default: 8 (the common 8-pt rhythm: fine enough to place zones freely,
+    /// coarse enough to line them up exactly).
     var editorGridStep: CGFloat {
         didSet {
             defaults.set(Double(editorGridStep), forKey: Keys.editorGridStep)
@@ -254,7 +254,7 @@ final class Settings {
         if defaults.object(forKey: Keys.editorGridStep) != nil {
             self.editorGridStep = max(0, CGFloat(defaults.double(forKey: Keys.editorGridStep)))
         } else {
-            self.editorGridStep = 16
+            self.editorGridStep = 8
         }
     }
 }

@@ -830,11 +830,11 @@ final class ZoneEditorView: NSView {
         path.lineWidth = 2
         path.stroke()
 
-        // Editor grid. Drawn no denser than every 12 pt so a fine step
+        // Editor grid. Drawn no denser than every 8 pt so a fine step
         // doesn't turn into a grey wash; edges still snap to every step.
         let step = Settings.shared.editorGridStep
         if step >= 1 {
-            let drawStep = step * max(1, (12 / step).rounded(.up))
+            let drawStep = step * max(1, (8 / step).rounded(.up))
             let grid = NSBezierPath()
             var x = vf.minX + drawStep
             while x < vf.maxX - 0.5 {

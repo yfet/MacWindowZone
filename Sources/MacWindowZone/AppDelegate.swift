@@ -157,7 +157,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         )
         gridItem.submenu = gridMenu
         menu.addItem(gridItem)
-        for preset: CGFloat in [0, 8, 10, 16, 20, 24, 32, 48] {
+        for preset: CGFloat in [0, 4, 8, 10, 12, 16, 24, 32] {
             let m = NSMenuItem(
                 title: preset == 0 ? "Off" : "\(Int(preset)) px",
                 action: #selector(setGridFromMenu(_:)),
