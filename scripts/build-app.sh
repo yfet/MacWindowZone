@@ -71,16 +71,29 @@ if compgen -G "$SPM_RESOURCE_BUNDLE_DIR"/*.bundle > /dev/null; then
     cp -R "$SPM_RESOURCE_BUNDLE_DIR"/*.bundle "$RESOURCES_DIR/"
 fi
 
-# Ad-hoc sign with a stable identifier so macOS treats this as the same app
-# across rebuilds — minimises the number of times Accessibility access has
-# to be re-granted. (You may still need to toggle it off/on once after the
-# very first rebuild because the binary hash changes.)
-echo "▶ Signing (ad-hoc, stable identifier)..."
-codesign --force --deep --sign - \
+# Sign with the local identity from scripts/create-signing-cert.sh when it
+# exists: the designated requirement is then "identifier + certificate", so
+# the Accessibility permission survives rebuilds. Otherwise fall back to an
+# ad-hoc signature, which macOS identifies by binary hash — Accessibility
+# then has to be re-granted after every rebuild.
+SIGN_IDENTITY="${MWZ_SIGN_IDENTITY:-MacWindowZone Local Signing}"
+SIGN_KEYCHAIN="${MWZ_SIGN_KEYCHAIN:-$HOME/Library/Keychains/macwindowzone-signing.keychain-db}"
+SIGN_ARGS=(--sign -)
+if [ -f "$SIGN_KEYCHAIN" ] && security find-certificate -c "$SIGN_IDENTITY" "$SIGN_KEYCHAIN" >/dev/null 2>&1; then
+    security unlock-keychain -p "" "$SIGN_KEYCHAIN"
+    # By SHA-1: a self-signed cert isn't "valid" for lookup by name.
+    SIGN_HASH="$(security find-certificate -c "$SIGN_IDENTITY" -Z "$SIGN_KEYCHAIN" | awk '/SHA-1/ {print $NF; exit}')"
+    SIGN_ARGS=(--sign "$SIGN_HASH")
+    echo "▶ Signing with local identity '$SIGN_IDENTITY'..."
+else
+    echo "▶ Signing (ad-hoc, stable identifier)..."
+    echo "  tip: run ./scripts/create-signing-cert.sh once so Accessibility survives rebuilds"
+fi
+codesign --force --deep "${SIGN_ARGS[@]}" \
     --identifier "dev.tefy.MacWindowZone" \
     --preserve-metadata=entitlements,flags \
     "$APP_BUNDLE" 2>/dev/null \
-  || codesign --force --deep --sign - \
+  || codesign --force --deep "${SIGN_ARGS[@]}" \
         --identifier "dev.tefy.MacWindowZone" \
         "$APP_BUNDLE"
 

@@ -111,12 +111,13 @@ final class WindowMemory {
         }
     }
 
-    func remember(bundleID: String, windowKey: String, zoneID: UUID?, screenID: String?, frame: CGRect?) {
+    func remember(bundleID: String, windowKey: String, zoneID: UUID?, zoneIDs: [UUID]? = nil, screenID: String?, frame: CGRect?) {
         let key = WindowMemoryStore.key(bundleID: bundleID, windowKey: windowKey)
         let entry = WindowMemoryEntry(
             bundleIdentifier: bundleID,
             windowKey: windowKey,
             zoneID: zoneID,
+            zoneIDs: zoneIDs,
             screenID: screenID,
             lastFrame: frame,
             lastSeen: Date()

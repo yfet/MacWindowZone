@@ -143,6 +143,35 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let customGap = NSMenuItem(title: "Custom…", action: #selector(promptCustomGap), keyEquivalent: "")
         customGap.target = self
         gapMenu.addItem(customGap)
+        gapMenu.addItem(.separator())
+        let gapHint = NSMenuItem(title: "Same gap at screen edges and between windows", action: nil, keyEquivalent: "")
+        gapHint.isEnabled = false
+        gapMenu.addItem(gapHint)
+
+        let gridMenu = NSMenu(title: "Editor Grid")
+        let gridStep = Settings.shared.editorGridStep
+        let gridItem = NSMenuItem(
+            title: gridStep >= 1 ? String(format: "Editor Grid: %.0f px", gridStep) : "Editor Grid: Off",
+            action: nil,
+            keyEquivalent: ""
+        )
+        gridItem.submenu = gridMenu
+        menu.addItem(gridItem)
+        for preset: CGFloat in [0, 4, 8, 10, 12, 16, 24, 32] {
+            let m = NSMenuItem(
+                title: preset == 0 ? "Off" : "\(Int(preset)) px",
+                action: #selector(setGridFromMenu(_:)),
+                keyEquivalent: ""
+            )
+            m.representedObject = preset
+            m.state = abs(gridStep - preset) < 0.5 ? .on : .off
+            m.target = self
+            gridMenu.addItem(m)
+        }
+        gridMenu.addItem(.separator())
+        let gridHint = NSMenuItem(title: "Edges also snap to the screen and other zones · ⌘ = no snap", action: nil, keyEquivalent: "")
+        gridHint.isEnabled = false
+        gridMenu.addItem(gridHint)
 
         let dragItem = NSMenuItem(
             title: "Snap on Drag",
@@ -172,6 +201,82 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             m.state = (mod == Settings.shared.snapModifier) ? .on : .off
             m.target = self
             modMenu.addItem(m)
+        }
+        let hint = Settings.shared.snapModifier.multiSelectHint
+        if !hint.isEmpty {
+            modMenu.addItem(.separator())
+            let hintItem = NSMenuItem(title: hint, action: nil, keyEquivalent: "")
+            hintItem.isEnabled = false
+            modMenu.addItem(hintItem)
+        }
+
+        let edgeItem = NSMenuItem(
+            title: "Snap to Screen Edges",
+            action: #selector(toggleEdgeSnap),
+            keyEquivalent: ""
+        )
+        edgeItem.state = Settings.shared.edgeSnapEnabled ? .on : .off
+        edgeItem.target = self
+        menu.addItem(edgeItem)
+        if Settings.shared.edgeSnapEnabled && Settings.nativeEdgeTilingEnabled {
+            let clash = NSMenuItem(
+                title: "⚠︎ macOS edge tiling is also on — turn one off (Desktop & Dock)",
+                action: nil,
+                keyEquivalent: ""
+            )
+            clash.isEnabled = false
+            menu.addItem(clash)
+        }
+
+        let bufMenu = NSMenu(title: "Edge Snap Buffer")
+        let bufItem = NSMenuItem(
+            title: String(format: "Edge Snap Buffer: %.0f px", Settings.shared.edgeSnapBuffer),
+            action: nil,
+            keyEquivalent: ""
+        )
+        bufItem.submenu = bufMenu
+        menu.addItem(bufItem)
+        for preset: CGFloat in [8, 12, 16, 24, 32, 48, 64, 96] {
+            let m = NSMenuItem(
+                title: "\(Int(preset)) px",
+                action: #selector(setEdgeBufferFromMenu(_:)),
+                keyEquivalent: ""
+            )
+            m.representedObject = preset
+            m.state = abs(Settings.shared.edgeSnapBuffer - preset) < 0.5 ? .on : .off
+            m.target = self
+            bufMenu.addItem(m)
+        }
+        bufMenu.addItem(.separator())
+        let bufHint = NSMenuItem(
+            title: "Wider is easier at the seam between displays",
+            action: nil,
+            keyEquivalent: ""
+        )
+        bufHint.isEnabled = false
+        bufMenu.addItem(bufHint)
+        let customBuf = NSMenuItem(title: "Custom…", action: #selector(promptCustomEdgeBuffer), keyEquivalent: "")
+        customBuf.target = self
+        bufMenu.addItem(customBuf)
+
+        let portraitMenu = NSMenu(title: "Portrait Display Edges")
+        let portraitItem = NSMenuItem(
+            title: "Portrait Edges: \(Settings.shared.portraitEdgeBehavior.shortName)",
+            action: nil,
+            keyEquivalent: ""
+        )
+        portraitItem.submenu = portraitMenu
+        menu.addItem(portraitItem)
+        for behavior in PortraitEdgeBehavior.allCases {
+            let m = NSMenuItem(
+                title: behavior.displayName,
+                action: #selector(setPortraitEdgeFromMenu(_:)),
+                keyEquivalent: ""
+            )
+            m.representedObject = behavior.rawValue
+            m.state = (behavior == Settings.shared.portraitEdgeBehavior) ? .on : .off
+            m.target = self
+            portraitMenu.addItem(m)
         }
 
         let restoreItem = NSMenuItem(
@@ -272,6 +377,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         refreshMenu()
     }
 
+    @objc private func toggleEdgeSnap() {
+        Settings.shared.edgeSnapEnabled.toggle()
+        refreshMenu()
+    }
+
     @objc private func toggleRestorer() {
         restorerEnabled.toggle()
         if restorerEnabled {
@@ -337,10 +447,46 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         refreshMenu()
     }
 
+    @objc private func setGridFromMenu(_ sender: NSMenuItem) {
+        guard let value = sender.representedObject as? CGFloat else { return }
+        Settings.shared.editorGridStep = value
+        refreshMenu()
+    }
+
     @objc private func setGapFromMenu(_ sender: NSMenuItem) {
         guard let value = sender.representedObject as? CGFloat else { return }
         Settings.shared.gap = value
         refreshMenu()
+    }
+
+    @objc private func setPortraitEdgeFromMenu(_ sender: NSMenuItem) {
+        guard let raw = sender.representedObject as? String,
+              let behavior = PortraitEdgeBehavior(rawValue: raw) else { return }
+        Settings.shared.portraitEdgeBehavior = behavior
+        refreshMenu()
+    }
+
+    @objc private func setEdgeBufferFromMenu(_ sender: NSMenuItem) {
+        guard let value = sender.representedObject as? CGFloat else { return }
+        Settings.shared.edgeSnapBuffer = value
+        refreshMenu()
+    }
+
+    @objc private func promptCustomEdgeBuffer() {
+        let alert = NSAlert()
+        alert.messageText = "Edge snap buffer (points)"
+        alert.informativeText = "How close the cursor must be to a screen edge to snap. Increase this if you have side-by-side displays — macOS does not stop the cursor at the seam."
+        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 200, height: 24))
+        field.stringValue = String(format: "%.0f", Settings.shared.edgeSnapBuffer)
+        alert.accessoryView = field
+        alert.addButton(withTitle: "Set")
+        alert.addButton(withTitle: "Cancel")
+        if alert.runModal() == .alertFirstButtonReturn {
+            if let v = Double(field.stringValue.trimmingCharacters(in: .whitespaces)), v >= 1, v <= 400 {
+                Settings.shared.edgeSnapBuffer = CGFloat(v)
+                refreshMenu()
+            }
+        }
     }
 
     @objc private func promptCustomGap() {

@@ -29,8 +29,10 @@ final class DragSnapOverlay: NSWindow {
 
     private var canvas: DragSnapView? { contentView as? DragSnapView }
 
-    func update(highlightingZone id: UUID?) {
-        canvas?.highlightedZoneID = id
+    func update(highlightingZones ids: Set<UUID>, showsZones: Bool, edgeTarget: EdgeSnapTarget?) {
+        canvas?.highlightedZoneIDs = ids
+        canvas?.showsZones = showsZones
+        canvas?.edgeTarget = edgeTarget
         canvas?.needsDisplay = true
     }
 
@@ -53,7 +55,9 @@ final class DragSnapOverlay: NSWindow {
 
 final class DragSnapView: NSView {
     private let screen: NSScreen
-    var highlightedZoneID: UUID?
+    var highlightedZoneIDs: Set<UUID> = []
+    var showsZones = false
+    var edgeTarget: EdgeSnapTarget?
 
     init(screen: NSScreen) {
         self.screen = screen
@@ -90,23 +94,57 @@ final class DragSnapView: NSView {
     override func draw(_ dirtyRect: NSRect) {
         guard let ctx = NSGraphicsContext.current?.cgContext else { return }
         ctx.clear(bounds)
-        for (zone, rect) in zoneRectsInView() {
-            let isActive = zone.id == highlightedZoneID
-            let fill = (isActive ? NSColor.systemBlue : NSColor.systemTeal).withAlphaComponent(isActive ? 0.45 : 0.18)
-            let stroke = (isActive ? NSColor.systemBlue : NSColor.systemTeal).withAlphaComponent(0.95)
-            fill.setFill()
-            let inset = rect.insetBy(dx: 6, dy: 6)
-            NSBezierPath(roundedRect: inset, xRadius: 12, yRadius: 12).fill()
-            stroke.setStroke()
-            let path = NSBezierPath(roundedRect: inset, xRadius: 12, yRadius: 12)
-            path.lineWidth = isActive ? 3 : 1.5
-            path.stroke()
+        let vf = visibleFrameInView()
+        let edgeRect = edgeTarget.map { $0.rect(in: vf) }
+
+        if showsZones {
+            let pairs = zoneRectsInView()
+            let selectedRects = pairs.compactMap { highlightedZoneIDs.contains($0.0.id) ? $0.1 : nil }
+            // Two or more zones: draw their bounding box as one snap target
+            // (adjacent 2×2 cells become a half, three become fullscreen).
+            let union: NSRect? = selectedRects.count >= 2
+                ? selectedRects.reduce(NSRect.null) { $0.union($1) }
+                : nil
+
+            for (zone, rect) in pairs {
+                // Skip cells swallowed by a larger highlight (multi-zone union
+                // or an edge-snap preview) so stacked fills don't show seams.
+                if let edgeRect, edgeRect.insetBy(dx: -0.5, dy: -0.5).contains(rect) { continue }
+                if let union, union.insetBy(dx: -0.5, dy: -0.5).contains(rect) { continue }
+                let isActive = edgeRect == nil && union == nil && highlightedZoneIDs.contains(zone.id)
+                drawZone(rect: rect, active: isActive)
+            }
+
+            if edgeRect == nil, let union, !union.isNull, !union.isEmpty {
+                drawZone(rect: union, active: true)
+            }
         }
+
+        if let edgeRect, !edgeRect.isNull, !edgeRect.isEmpty {
+            drawZone(rect: edgeRect, active: true)
+        }
+    }
+
+    private func drawZone(rect: NSRect, active: Bool) {
+        let fill = (active ? NSColor.systemBlue : NSColor.systemTeal).withAlphaComponent(active ? 0.45 : 0.18)
+        let stroke = (active ? NSColor.systemBlue : NSColor.systemTeal).withAlphaComponent(0.95)
+        fill.setFill()
+        let inset = rect.insetBy(dx: 6, dy: 6)
+        NSBezierPath(roundedRect: inset, xRadius: 12, yRadius: 12).fill()
+        stroke.setStroke()
+        let path = NSBezierPath(roundedRect: inset, xRadius: 12, yRadius: 12)
+        path.lineWidth = active ? 3 : 1.5
+        path.stroke()
     }
 }
 
-/// Watches the global mouse stream; while the user drags a window with Shift
-/// held, displays zone overlays and snaps the window on release.
+/// Watches the global mouse stream.
+///
+/// * Zone snap: while the configured modifier is held, displays zone overlays
+///   and snaps the window on release. Hold Control (Option if Control is the
+///   snap modifier) to accumulate zones; the window snaps to their bounding box.
+/// * Edge snap: dragging a window to a screen edge/corner (no modifier needed)
+///   previews fullscreen / half / quarter and snaps on release.
 final class DragSnapController {
     static let shared = DragSnapController()
 
@@ -120,9 +158,44 @@ final class DragSnapController {
     // Drag state
     private var draggingWindow: AXWindow?
     private var initialWindowFrameAX: CGRect?
-    private var initialMouseAX: CGPoint?
+    /// Latched once the candidate window's origin has actually moved.
+    /// Cursor travel alone (text selection, sliders) must not arm a snap.
+    private var windowOriginMoved = false
+    private var lastMoveProbe: TimeInterval = 0
     private var overlaysByScreen: [String: DragSnapOverlay] = [:]
     private var overlayVisible = false
+    /// Zones visited while the multi-select modifier is held, in visit order.
+    private var selectedZoneIDs: [UUID] = []
+    /// Screen the current multi-select set belongs to; crossing screens resets it.
+    private var multiSelectScreenID: String?
+    /// Aero-style edge/corner target, if the cursor is in the edge buffer.
+    private var edgeSnapTarget: EdgeSnapTarget?
+    private var edgeSnapScreenID: String?
+    /// False until the cursor leaves any edge zone it started in, so clicking
+    /// a title bar that's already against the top of the screen doesn't snap.
+    private var edgeSnapArmed = false
+    private var showsZoneLayout = false
+    /// True when `selectedZoneIDs` was built with the multi-select modifier
+    /// (kept after key-up); false when it's just the zones near the cursor.
+    private var selectionIsAccumulated = false
+
+    /// Distance (points) from the cursor within which a zone counts as
+    /// hovered. Lets the gap between spaced-out zones, or the corner where
+    /// four meet, select all of them (FancyZones' "sensitivity radius").
+    private static let sensitivityRadius: CGFloat = 16
+
+    /// Zones containing `p` or within `sensitivityRadius` of it, nearest first.
+    static func zones(near p: NSPoint, in zones: [Zone], visibleFrame vf: CGRect) -> [Zone] {
+        zones.compactMap { zone -> (Zone, CGFloat)? in
+            let r = zone.absoluteRect(in: vf)
+            let dx = max(r.minX - p.x, 0, p.x - r.maxX)
+            let dy = max(r.minY - p.y, 0, p.y - r.maxY)
+            let d = hypot(dx, dy)
+            return d <= sensitivityRadius ? (zone, d) : nil
+        }
+        .sorted { $0.1 < $1.1 }
+        .map(\.0)
+    }
 
     private init() {}
 
@@ -163,13 +236,9 @@ final class DragSnapController {
             }
             updateDrag(at: NSEvent.mouseLocation, modifiers: event.modifierFlags)
         case .flagsChanged:
-            // Modifier toggled mid-drag — refresh overlay state.
+            // Modifier toggled mid-drag — refresh overlay / multi-select state.
             if draggingWindow != nil {
-                if Settings.shared.snapModifier.isSatisfied(by: event.modifierFlags) {
-                    showOverlays()
-                } else {
-                    hideOverlays()
-                }
+                updateDrag(at: NSEvent.mouseLocation, modifiers: event.modifierFlags)
             }
         case .leftMouseUp:
             finishDrag(at: NSEvent.mouseLocation, modifiers: event.modifierFlags)
@@ -193,54 +262,91 @@ final class DragSnapController {
         Log.line("[MWZ DragSnap] mouseDown: candidate=\(window.bundleIdentifier) title=\(window.title) (via \(hit != nil ? "axHit" : sysFocus != nil ? "sysFocus" : "wsFocus"))")
         draggingWindow = window
         initialWindowFrameAX = window.frame
-        initialMouseAX = axPoint
+        // Don't fire edge-snap if the press already sat in an edge buffer
+        // (typical for a window parked under the menu bar).
+        if let screen = ScreenManager.screenContaining(point: cocoaPoint) {
+            edgeSnapArmed = edgeHit(at: cocoaPoint, on: screen, buffer: Settings.shared.edgeSnapBuffer) == nil
+        } else {
+            edgeSnapArmed = true
+        }
     }
 
     private func updateDrag(at cocoaPoint: NSPoint, modifiers: NSEvent.ModifierFlags) {
         guard draggingWindow != nil else { return }
 
         let mod = Settings.shared.snapModifier
-        // When a modifier is required, the user is being explicit — show the
-        // overlay as soon as the modifier is held, even before the window has
-        // measurably moved. Without a modifier, gate on actual window movement
-        // so we don't flash zones on selection-rect drags etc.
-        let modSatisfied = mod.isSatisfied(by: modifiers)
-        let movementGate: Bool
-        if mod == .none {
-            if let window = draggingWindow, let initialFrame = initialWindowFrameAX,
-               let currentFrame = window.frame {
-                let dx = abs(currentFrame.minX - initialFrame.minX)
-                let dy = abs(currentFrame.minY - initialFrame.minY)
-                movementGate = (dx + dy) >= 2
-            } else {
-                movementGate = false
-            }
-        } else {
-            movementGate = true
+        // A held modifier or a moving cursor is not a window drag. Shift-selecting
+        // text, or dragging a selection into the screen edge, must not preview
+        // or commit a snap — only a window whose origin has actually moved.
+        let modHeld = mod.isSatisfied(by: modifiers)
+        // Reading the window frame is a synchronous AX round-trip to the
+        // target app; skip it entirely when no snap could result.
+        let moved = (modHeld || Settings.shared.edgeSnapEnabled) && windowOriginHasMoved()
+        let zoneMode = modHeld && moved
+        if !zoneMode {
+            selectedZoneIDs = []
+            multiSelectScreenID = nil
         }
+        // An explicitly held zone modifier means the user wants a zone, so
+        // edges must not hijack zones that touch the screen border.
+        let edgeTarget = resolveEdgeTarget(
+            at: cocoaPoint,
+            windowMoved: moved,
+            suppressed: zoneMode && mod != .none
+        )
+        let edgeMode = edgeTarget != nil
 
-        if modSatisfied && movementGate {
+        if zoneMode || edgeMode {
             if !overlayVisible {
-                Log.line("[MWZ DragSnap] showing overlay — mod=\(mod) gate=\(movementGate) flags=\(modifiers.rawValue)")
+                Log.line("[MWZ DragSnap] showing overlay — zone=\(zoneMode) edge=\(edgeTarget?.name ?? "none") flags=\(modifiers.rawValue)")
             }
+            showsZoneLayout = zoneMode
             showOverlays()
-            updateHighlight(cocoaPoint: cocoaPoint)
+            updateHighlight(cocoaPoint: cocoaPoint, modifiers: modifiers)
         } else {
             hideOverlays()
         }
     }
 
     private func finishDrag(at cocoaPoint: NSPoint, modifiers: NSEvent.ModifierFlags) {
+        let selectedIDs = selectedZoneIDs
+        let selectedScreenID = multiSelectScreenID
+        let edgeTarget = edgeSnapTarget
+        let edgeScreenID = edgeSnapScreenID
         defer { resetDragState() }
         guard overlayVisible, let window = draggingWindow else {
             hideOverlays()
             return
         }
         hideOverlays()
+
+        if let edgeTarget, let screenID = edgeScreenID,
+           let screen = ScreenManager.screen(for: screenID) {
+            Log.line("[MWZ DragSnap] edge-snap \(edgeTarget.name) on \(screenID)")
+            Snapper.snap(window: window, toEdge: edgeTarget, on: screen)
+            return
+        }
+
         guard Settings.shared.snapModifier.isSatisfied(by: modifiers) else { return }
+
+        if selectedIDs.count >= 2, let screenID = selectedScreenID,
+           let screen = ScreenManager.screen(for: screenID) {
+            let layout = ZoneStore.shared.layout(for: screenID)
+            let zones = selectedIDs.compactMap { id in layout.zones.first { $0.id == id } }
+            if zones.count >= 2 {
+                Log.line("[MWZ DragSnap] multi-snap \(zones.count) zones on \(screenID)")
+                Snapper.snap(window: window, toZones: zones, on: screen)
+                return
+            }
+        }
+
         guard let screen = ScreenManager.screenContaining(point: cocoaPoint) else { return }
         let layout = ZoneStore.shared.layout(for: ScreenManager.identifier(for: screen))
         let vf = screen.visibleFrame
+        if let id = selectedIDs.first, let zone = layout.zones.first(where: { $0.id == id }) {
+            Snapper.snap(window: window, to: zone, on: screen)
+            return
+        }
         guard let zone = layout.zones.first(where: { $0.absoluteRect(in: vf).contains(cocoaPoint) }) else { return }
         Snapper.snap(window: window, to: zone, on: screen)
     }
@@ -248,7 +354,82 @@ final class DragSnapController {
     private func resetDragState() {
         draggingWindow = nil
         initialWindowFrameAX = nil
-        initialMouseAX = nil
+        windowOriginMoved = false
+        lastMoveProbe = 0
+        selectedZoneIDs = []
+        multiSelectScreenID = nil
+        edgeSnapTarget = nil
+        edgeSnapScreenID = nil
+        edgeSnapArmed = false
+        showsZoneLayout = false
+        selectionIsAccumulated = false
+    }
+
+    private func edgeHit(at point: NSPoint, on screen: NSScreen, buffer: CGFloat) -> EdgeSnapTarget? {
+        EdgeSnap.target(
+            at: point,
+            on: screen,
+            buffer: buffer,
+            portrait: Settings.shared.portraitEdgeBehavior
+        )
+    }
+
+    /// True once the candidate window's origin has travelled at least 4 pt.
+    /// Latched so a later failed AX read doesn't hide the overlay mid-drag.
+    private func windowOriginHasMoved() -> Bool {
+        if windowOriginMoved { return true }
+        // Throttle the AX probe: drag events arrive at display rate and a
+        // text-selection drag never latches.
+        let now = ProcessInfo.processInfo.systemUptime
+        guard now - lastMoveProbe >= 0.03 else { return false }
+        lastMoveProbe = now
+        guard let initial = initialWindowFrameAX,
+              let current = draggingWindow?.frame else { return false }
+        if hypot(current.minX - initial.minX, current.minY - initial.minY) >= 4 {
+            windowOriginMoved = true
+        }
+        return windowOriginMoved
+    }
+
+    private func resolveEdgeTarget(at cocoaPoint: NSPoint, windowMoved: Bool, suppressed: Bool) -> EdgeSnapTarget? {
+        guard Settings.shared.edgeSnapEnabled, !suppressed else {
+            edgeSnapTarget = nil
+            edgeSnapScreenID = nil
+            return nil
+        }
+        // Don't steal a multi-zone selection the user is painting.
+        if selectedZoneIDs.count >= 2 {
+            edgeSnapTarget = nil
+            edgeSnapScreenID = nil
+            return nil
+        }
+        guard let screen = ScreenManager.screenContaining(point: cocoaPoint) else {
+            edgeSnapTarget = nil
+            edgeSnapScreenID = nil
+            return nil
+        }
+        let buffer = Settings.shared.edgeSnapBuffer
+        var hit = edgeHit(at: cocoaPoint, on: screen, buffer: buffer)
+        // Stick to the current target a few points past the buffer so the
+        // preview doesn't flicker on the boundary, especially at a display seam.
+        if hit == nil, let sticky = edgeSnapTarget,
+           edgeHit(at: cocoaPoint, on: screen, buffer: buffer + 12) == sticky {
+            hit = sticky
+        }
+        if !edgeSnapArmed {
+            if hit == nil { edgeSnapArmed = true }
+            edgeSnapTarget = nil
+            edgeSnapScreenID = nil
+            return nil
+        }
+        guard windowMoved else {
+            edgeSnapTarget = nil
+            edgeSnapScreenID = nil
+            return nil
+        }
+        edgeSnapTarget = hit
+        edgeSnapScreenID = hit != nil ? ScreenManager.identifier(for: screen) : nil
+        return hit
     }
 
     // MARK: Overlay management
@@ -268,17 +449,70 @@ final class DragSnapController {
     private func hideOverlays() {
         guard overlayVisible else { return }
         overlayVisible = false
-        for (_, overlay) in overlaysByScreen { overlay.fadeOutAndClose() }
+        selectedZoneIDs = []
+        multiSelectScreenID = nil
+        for (_, overlay) in overlaysByScreen {
+            overlay.update(highlightingZones: [], showsZones: false, edgeTarget: nil)
+            overlay.fadeOutAndClose()
+        }
+        edgeSnapTarget = nil
+        edgeSnapScreenID = nil
+        showsZoneLayout = false
+        selectionIsAccumulated = false
     }
 
-    private func updateHighlight(cocoaPoint: NSPoint) {
+    private func updateHighlight(cocoaPoint: NSPoint, modifiers: NSEvent.ModifierFlags) {
         guard let screen = ScreenManager.screenContaining(point: cocoaPoint) else { return }
         let vf = screen.visibleFrame
         let id = ScreenManager.identifier(for: screen)
         let layout = ZoneStore.shared.layout(for: id)
-        let hovered = layout.zones.first(where: { $0.absoluteRect(in: vf).contains(cocoaPoint) })
+        let nearby = Self.zones(near: cocoaPoint, in: layout.zones, visibleFrame: vf)
+        let multi = Settings.shared.snapModifier.isMultiSelectSatisfied(by: modifiers)
+        let zoneMode = showsZoneLayout
+        let edgeTarget = edgeSnapTarget
+        let edgeScreenID = edgeSnapScreenID
+
+        if zoneMode {
+            if multi {
+                if multiSelectScreenID != id {
+                    selectedZoneIDs = []
+                    multiSelectScreenID = id
+                }
+                for zone in nearby where !selectedZoneIDs.contains(zone.id) {
+                    selectedZoneIDs.append(zone.id)
+                    Log.line("[MWZ DragSnap] multi-select +\(zone.name) (\(selectedZoneIDs.count) zones)")
+                }
+                selectionIsAccumulated = true
+            } else if selectionIsAccumulated, selectedZoneIDs.count >= 2, multiSelectScreenID == id {
+                // Keep the accumulated set after Control is released, so a slightly
+                // early key-up still snaps to the union. Reset only when the cursor
+                // reaches a zone that isn't already selected.
+                if !nearby.isEmpty, !nearby.allSatisfy({ selectedZoneIDs.contains($0.id) }) {
+                    selectedZoneIDs = nearby.map(\.id)
+                    selectionIsAccumulated = false
+                }
+            } else {
+                // Every zone within the sensitivity radius: the cursor in the
+                // gap between zones (or at a corner where four meet) selects
+                // all of them and the window spans their bounding box.
+                selectedZoneIDs = nearby.map(\.id)
+                multiSelectScreenID = nearby.isEmpty ? nil : id
+                selectionIsAccumulated = false
+            }
+        }
+
         for (screenID, overlay) in overlaysByScreen {
-            overlay.update(highlightingZone: screenID == id ? hovered?.id : nil)
+            let zones: Set<UUID>
+            if zoneMode, edgeTarget == nil, screenID == (multiSelectScreenID ?? id) {
+                zones = Set(selectedZoneIDs)
+            } else {
+                zones = []
+            }
+            overlay.update(
+                highlightingZones: zones,
+                showsZones: zoneMode,
+                edgeTarget: screenID == edgeScreenID ? edgeTarget : nil
+            )
         }
     }
 
