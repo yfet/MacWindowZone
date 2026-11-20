@@ -111,6 +111,7 @@ swift scripts/generate-icon.swift
 | Drag an edge or corner | Resize (shared edges move adjacent zones together) |
 | `⇧ Shift + Click` inside a zone | Split vertically into two equal halves |
 | `⌃ Control + Click` inside a zone | Split horizontally into two equal halves |
+| `⌥ Option` + drag an edge | Resize only that zone (detach it from its neighbours) |
 | Hold `⌘` while dragging | Ignore the grid and magnetic edges |
 | `Delete` / `Backspace` | Remove the selected zone (neighbours absorb the space) |
 | `⌘R` | Reset the current screen to defaults |

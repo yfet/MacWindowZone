@@ -392,22 +392,32 @@ final class ZoneEditorView: NSView {
                 let rect = NSRect(origin: NSPoint(x: nx, y: ny), size: originalSize)
                 zone.fractionalRect = FractionalRect.from(absolute: rect, in: vf)
             }
-        case .resize(_, let originalLayout, let originalRect, let sides):
+        case .resize(let id, let originalLayout, let originalRect, let sides):
+            // ⌥ detaches: resize only the grabbed zone, neighbours stay put.
+            let detached = event.modifierFlags.contains(.option)
             var q = p
             if snaps {
                 // Snap against the layout as it was at mouseDown, minus the
-                // edge being dragged — otherwise it would stick to itself.
-                let zones = originalLayout.zones
+                // edge(s) being dragged — otherwise it would stick to itself.
+                // When detached, the neighbour's edge stays a magnet so the
+                // zone can be re-attached exactly.
+                let zones = detached ? originalLayout.zones.filter { $0.id != id } : originalLayout.zones
                 if sides.contains(.left) || sides.contains(.right) {
                     let oldX = sides.contains(.left) ? originalRect.minX : originalRect.maxX
-                    q.x = snap(p.x, axis: .x, zones: zones, ignoringEdge: oldX)
+                    q.x = snap(p.x, axis: .x, zones: zones, ignoringEdge: detached ? nil : oldX)
                 }
                 if sides.contains(.top) || sides.contains(.bottom) {
                     let oldY = sides.contains(.top) ? originalRect.maxY : originalRect.minY
-                    q.y = snap(p.y, axis: .y, zones: zones, ignoringEdge: oldY)
+                    q.y = snap(p.y, axis: .y, zones: zones, ignoringEdge: detached ? nil : oldY)
                 }
             }
-            applySharedResize(originalLayout: originalLayout, originalRect: originalRect, sides: sides, cursor: q)
+            applySharedResize(
+                originalLayout: originalLayout,
+                originalRect: originalRect,
+                sides: sides,
+                cursor: q,
+                onlyZoneID: detached ? id : nil
+            )
         case .none:
             break
         }
@@ -486,12 +496,16 @@ final class ZoneEditorView: NSView {
         originalLayout: ScreenLayout,
         originalRect: NSRect,
         sides: ResizeSides,
-        cursor p: NSPoint
+        cursor p: NSPoint,
+        onlyZoneID: UUID? = nil
     ) {
         let vf = visibleFrameInView()
         let tol: CGFloat = 1.5
         let minSize: CGFloat = 60
         var newLayout = originalLayout
+        // Zones whose edges follow the drag: all that share the edge, or
+        // just the grabbed one when detached (⌥).
+        let follows: (Zone) -> Bool = { onlyZoneID == nil || $0.id == onlyZoneID }
 
         // --- X axis ---
         if sides.contains(.left) || sides.contains(.right) {
@@ -500,14 +514,14 @@ final class ZoneEditorView: NSView {
 
             var minAllowed = vf.minX
             var maxAllowed = vf.maxX
-            for zone in originalLayout.zones {
+            for zone in originalLayout.zones where follows(zone) {
                 let r = zone.absoluteRect(in: vf)
                 if abs(r.minX - oldX) < tol { maxAllowed = min(maxAllowed, r.maxX - minSize) }
                 if abs(r.maxX - oldX) < tol { minAllowed = max(minAllowed, r.minX + minSize) }
             }
             targetX = max(minAllowed, min(targetX, maxAllowed))
 
-            for i in 0..<newLayout.zones.count {
+            for i in 0..<newLayout.zones.count where follows(originalLayout.zones[i]) {
                 let originalR = originalLayout.zones[i].absoluteRect(in: vf)
                 var r = originalR
                 var changed = false
@@ -533,14 +547,14 @@ final class ZoneEditorView: NSView {
 
             var minAllowed = vf.minY
             var maxAllowed = vf.maxY
-            for zone in originalLayout.zones {
+            for zone in originalLayout.zones where follows(zone) {
                 let r = zone.absoluteRect(in: vf)
                 if abs(r.minY - oldY) < tol { maxAllowed = min(maxAllowed, r.maxY - minSize) }
                 if abs(r.maxY - oldY) < tol { minAllowed = max(minAllowed, r.minY + minSize) }
             }
             targetY = max(minAllowed, min(targetY, maxAllowed))
 
-            for i in 0..<newLayout.zones.count {
+            for i in 0..<newLayout.zones.count where follows(originalLayout.zones[i]) {
                 let originalR = originalLayout.zones[i].absoluteRect(in: vf)
                 var r = originalR
                 // X may already have been mutated for this zone above — preserve it.
@@ -881,7 +895,7 @@ final class ZoneEditorView: NSView {
         }
 
         // Help banner.
-        let help = "Click+drag empty to create  ·  drag inside a zone to move  ·  drag edges/corners to resize  ·  ⇧Click=split vertical  ·  ⌃Click=split horizontal  ·  Delete to remove  ·  hold ⌘ to ignore grid  ·  ⌘R reset  ·  Esc"
+        let help = "Click+drag empty to create  ·  drag inside a zone to move  ·  drag edges/corners to resize  ·  ⇧Click=split vertical  ·  ⌃Click=split horizontal  ·  Delete to remove  ·  ⌥drag edge = resize only this zone  ·  hold ⌘ to ignore grid  ·  ⌘R reset  ·  Esc"
         let attrs: [NSAttributedString.Key: Any] = [
             .font: NSFont.systemFont(ofSize: 14, weight: .medium),
             .foregroundColor: NSColor.white
